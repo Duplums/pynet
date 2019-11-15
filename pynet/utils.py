@@ -72,7 +72,7 @@ def test_model(model, shape):
     return out
 
 
-def checkpoint(model, epoch, fold, outdir):
+def checkpoint(model, epoch, fold, outdir, optimizer=None, **kwargs):
     """ Save the weights of a given model.
 
     Parameters
@@ -86,10 +86,18 @@ def checkpoint(model, epoch, fold, outdir):
     outdir: str
         the destination directory where a 'model_<fold>_epoch_<epoch>.pth'
         file will be generated.
+    optimizer: Optimizer that was used during the training (import to save the hyperparameters, etc.)
+    **kwargs: others parameters to save during the training
     """
     outfile = os.path.join(
         outdir, "model_{0}_epoch_{1}.pth".format(fold, epoch))
-    torch.save(model, outfile)
+
+    if optimizer is not None:
+        kwargs.update(optimizer_state_dict=optimizer.state_dict())
+
+    torch.save({'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                **kwargs}, outfile)
     return outfile
 
 
@@ -131,7 +139,7 @@ def get_named_layers(model, allowed_layers=ALLOWED_LAYERS, resume=False):
 
 
 def layer_at(model, layer_name, x, allowed_layers=ALLOWED_LAYERS):
-    """ Access intermediate layers of pretrined network.
+    """ Access intermediate layers of pretrained network.
 
     Parameters
     ----------

@@ -56,7 +56,7 @@ class UNet(nn.Module):
         up_mode: string, default 'transpose'
             type of upconvolution. Choices: 'transpose' for transpose
             convolution, 'upsample' for nearest neighbour upsampling.
-        merge_mode: str, defatul 'concat'
+        merge_mode: str, default 'concat', can be 'add'
             the skip connections merging strategy.
         batchnorm: bool, default False
             normalize the inputs of the activation function.
@@ -215,11 +215,10 @@ class Down(nn.Module):
                  batchnorm=True):
         super(Down, self).__init__()
         if pooling:
-
             self.ops = nn.Sequential(collections.OrderedDict([
                 ("maxpool", eval("nn.MaxPool{0}(2)".format(dim))),
-                ("doubleconv", DoubleConv(
-                    in_channels, out_channels, dim, batchnorm=batchnorm))]))
+                ("doubleconv", DoubleConv(in_channels, out_channels, dim, batchnorm=batchnorm))
+                ]))
         else:
             self.ops = nn.Sequential(collections.OrderedDict([
                 ("doubleconv", DoubleConv(
@@ -240,8 +239,10 @@ class Up(nn.Module):
         super(Up, self).__init__()
         self.merge_mode = merge_mode
         self.upconv = UpConv(in_channels, out_channels, dim, mode=up_mode)
-        self.doubleconv = DoubleConv(
-            in_channels, out_channels, dim, batchnorm=batchnorm)
+        if self.merge_mode == "concat":
+            self.doubleconv = DoubleConv(in_channels, out_channels, dim, batchnorm=batchnorm)
+        else:
+            self.doubleconv = DoubleConv(out_channels, out_channels, dim, batchnorm=batchnorm)
 
     def forward(self, x_down, x_up):
         x_down = self.upconv(x_down)

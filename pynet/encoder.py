@@ -26,7 +26,7 @@ class UNetEncoder(Base):
     """
     def __init__(self, num_classes, in_channels=1, depth=5, start_filts=64,
                  up_mode="transpose", merge_mode="concat", batchnorm=False,
-                 dim="3d", pretrained=None, batch_size="auto",
+                 dim="3d", pretrained_path=None, batch_size="auto",
                  optimizer_name="Adam", learning_rate=1e-3,
                  loss_name="NLLLoss", metrics=None, use_cuda=False, **kwargs):
         """ Class initilization.
@@ -44,12 +44,13 @@ class UNetEncoder(Base):
         up_mode: string, default 'transpose'
             type of upconvolution. Choices: 'transpose' for transpose
             convolution or 'upsample' for nearest neighbour upsampling.
-        merge_mode: str, defatul 'concat'
+        merge_mode: str, default 'concat'
             the skip connections merging strategy.
         batchnorm: bool, default False
             normalize the inputs of the activation function.
         dim: str, default '3d'
             '3d' or '2d' input data.
+        pretrained_path: the path to a previous checkpoint saved to restore
         batch_size: int, default 'auto'
             the mini-batches size.
         optimizer_name: str, default 'Adam'
@@ -77,12 +78,7 @@ class UNetEncoder(Base):
             merge_mode=merge_mode,
             batchnorm=batchnorm,
             dim=dim)
-        if pretrained is not None:
-            loader = torch.load(pretrained)
-            if hasattr(loader, "state_dict"):
-                self.model.load_state_dict(loader.state_dict())
-            else:
-                self.model.load_state_dict(loader)
+
         super().__init__(
             batch_size=batch_size,
             optimizer_name=optimizer_name,
@@ -90,5 +86,6 @@ class UNetEncoder(Base):
             loss_name=loss_name,
             metrics=metrics,
             use_cuda=use_cuda,
+            pretrained_path=pretrained_path
             **kwargs)
 

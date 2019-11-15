@@ -20,6 +20,7 @@ import warnings
 from torchvision import models
 import torch
 import torch.nn.functional as func
+from torch.utils.data import DataLoader
 import tqdm
 import numpy as np
 from sklearn.utils import gen_batches
@@ -32,12 +33,16 @@ import pynet.metrics as mmetrics
 
 
 class Base(Observable):
-    """ Class to perform classification.
+    """ Base class to perform the optimization based on a model and an optimizer.
+        The objective function (i.e loss) can be given or retrieved directly from
+        torch.nn.{loss_name}
     """    
     def __init__(self, batch_size="auto", optimizer_name="Adam",
                  learning_rate=1e-3, loss_name="NLLLoss", metrics=None,
-                 use_cuda=False, **kwargs):
-        """ Class instantiation.
+                 use_cuda=False, pretrained_path=None, **kwargs):
+        """ Class instantiation. It sets the model, the optimizer and the objective function
+            that will be used by the fit(), train() and test() functions. We assume that the weights
+            of the model are already initialized (e.g in case of pre-training)
 
         Observers will be notified, allowed signals are:
         - 'before_epoch'
@@ -59,6 +64,7 @@ class Base(Observable):
             a list of extra metrics that will be computed.
         use_cuda: bool, default False
             wether to use GPU or CPU.
+        pretrained_path: str, path to the previous checkpoints saved
         kwargs: dict
             specify directly a custom 'model', 'optimizer' or 'loss'. Can also
             be used to set specific optimizer parameters.
@@ -73,14 +79,6 @@ class Base(Observable):
                 kwargs.pop(name)
         if "model" in kwargs:
             self.model = kwargs.pop("model")
-        if self.optimizer is None:
-            if optimizer_name not in dir(torch.optim):
-                raise ValueError("Optimizer '{0}' uknown: check available "
-                                 "optimizer in 'pytorch.optim'.")
-            self.optimizer = getattr(torch.optim, optimizer_name)(
-                self.model.parameters(),
-                lr=learning_rate,
-                **kwargs)
         if self.loss is None:
             if loss_name not in dir(torch.nn):
                 raise ValueError("Loss '{0}' uknown: check available loss in "
@@ -93,10 +91,96 @@ class Base(Observable):
                                  "to fill the 'METRICS' factory, or ask for "
                                  "some help!")
             self.metrics[name] = mmetrics.METRICS[name]
+
+        if self.optimizer is None:
+            if optimizer_name not in dir(torch.optim):
+                raise ValueError("Optimizer '{0}' uknown: check available "
+                                 "optimizer in 'pytorch.optim'.")
+            self.optimizer = getattr(torch.optim, optimizer_name)(
+                self.model.parameters(),
+                lr=learning_rate,
+                **kwargs)
+
+        # If we want to restore some (or all) of the parameters already optimized during a previous training
+        if pretrained_path is not None:
+            checkpoint_ = torch.load(pretrained_path)
+            if isinstance(checkpoint_, dict):
+                if 'optimizer_state_dict' in checkpoint_:
+                    self.optimizer.load_state_dict(checkpoint_['optimizer_state_dict'], strict=False)
+                if 'model_state_dict' in checkpoint_:
+                    self.model.load_state_dict(checkpoint_['model_state_dict'], strict=False)
+            else:
+                self.model = torch.load(checkpoint_)
+
         if use_cuda and not torch.cuda.is_available():
             raise ValueError("No GPU found: unset 'use_cuda' parameter.")
         self.device = torch.device("cuda" if use_cuda else "cpu")
         self.model = self.model.to(self.device)
+
+    def global_training(self, train_loader, validation_loader=None, nb_epochs=100):
+        history = History(name="training")
+        for epoch in range(1, nb_epochs + 1):
+            self.train(train_loader, epoch, history)
+            history.summary() # prints the summary of the current training
+            if validation_loader is not None:
+                losses = self.validate(validation_loader)
+                print('Validation loss avg: {.2f}'.format(np.mean([l.cpu().numpy() for l in losses])))
+        return history
+
+
+    def train(self, train_loader, epoch, history):
+        """ train the models according to the incoming data from the data loader. This training is only over
+            one epoch so it does not care about the stopping criterion.
+
+        :param
+            train_loader: a DataLoader that produces multiple batches of Tensor data
+            epoch: the current epoch
+            history: a History object used for visualization
+        :return: basically the history of the training (containing all the metrics, loss, ...)
+        """
+        assert isinstance(train_loader, DataLoader)
+        # turns the model in train mode (for BN, Dropout, ...)
+        self.model.train()
+
+        # Go into the main loop
+        for i, (inputs, targets) in enumerate(train_loader):
+            # Moves the data to self.device (either CPU or GPU)
+            inputs = inputs.to(self.device)
+            targets = targets.to(self.device)
+            # Clear the gradient of all the optimized tensors
+            self.optimizer.zero_grad()
+            # Computes the output
+            outputs = self.model(inputs)
+            # Computes the objective function
+            loss = self.loss(outputs, targets)
+            # Computes the gradient for all tensors that "requires_grad"
+            loss.backward()
+            # Then do the actual SGD
+            self.optimizer.step()
+            # Saves all the useful metrics and the loss
+            for (name, metric) in self.metrics.items():
+                history.log((epoch, i), name=metric(outputs, targets))
+            history.log((epoch, i), loss=loss)
+
+        return history
+
+    def validate(self, validation_loader):
+        # turns the model in test mode
+        self.model.eval()
+        losses = []
+        # do not compute any gradient for the tensors
+        with torch.no_grad():
+            for i, (inputs, targets) in enumerate(validation_loader):
+                # Moves the data to self.device (either CPU or GPU)
+                inputs = inputs.to(self.device)
+                targets = targets.to(self.device)
+                # Computes directly the output
+                outputs = self.model(inputs)
+                loss = self.loss(outputs, targets)
+                # Saves the loss
+                losses.append(loss)
+        return losses
+
 
     def _gen_batches(self, n_samples):
         if self.batch_size == "auto":
