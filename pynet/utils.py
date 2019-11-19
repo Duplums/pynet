@@ -214,3 +214,11 @@ def reset_weights(model):
             m.reset_parameters()
     model.apply(weight_reset)
 
+def tensor2im(tensor):
+    """
+    It returns a numpy array from an input tensor which can share the memory with the input
+    """
+    if not isinstance(tensor, np.ndarray):
+        if isinstance(tensor, torch.Tensor):
+            return tensor.detach().cpu().numpy()
+    return tensor

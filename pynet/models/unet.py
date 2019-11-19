@@ -165,23 +165,23 @@ class DoubleConv(nn.Module):
                     "stride=stride, padding=padding, bias=bias)".format(dim))),
                 ("norm1", eval(
                     "nn.BatchNorm{0}(out_channels)".format(dim))),
-                ("leakyrelu1", nn.LeakyReLU()),
+                ("relu1", nn.ReLU()),
                 ("conv2", eval(
                     "nn.Conv{0}(out_channels, out_channels, kernel_size, "
                     "stride=stride, padding=padding, bias=bias)".format(dim))),
                 ("norm2", eval(
                     "nn.BatchNorm{0}(out_channels)".format(dim))),
-                ("leakyrelu2", nn.LeakyReLU())]))
+                ("relu2", nn.ReLU())]))
         else:
             self.ops = nn.Sequential(collections.OrderedDict([
                 ("conv1", eval(
                     "nn.Conv{0}(in_channels, out_channels, kernel_size, "
                     "stride=stride, padding=padding, bias=bias)".format(dim))),
-                ("leakyrelu1", nn.LeakyReLU()),
+                ("relu1", nn.ReLU()),
                 ("conv2", eval(
                     "nn.Conv{0}(out_channels, out_channels, kernel_size, "
                     "stride=stride, padding=padding, bias=bias)".format(dim))),
-                ("leakyrelu2", nn.LeakyReLU())]))
+                ("relu2", nn.ReLU())]))
 
     def forward(self, x):
         x = self.ops(x)
@@ -209,7 +209,7 @@ def Conv1x1x1(in_channels, out_channels, dim, groups=1):
 class Down(nn.Module):
     """
     A helper Module that performs 2 convolutions and 1 MaxPool.
-    A LeakyReLU activation and optionally a BatchNorm follows each convolution.
+    A ReLU activation and optionally a BatchNorm follows each convolution.
     """
     def __init__(self, in_channels, out_channels, dim, pooling=True,
                  batchnorm=True):
@@ -232,7 +232,7 @@ class Down(nn.Module):
 class Up(nn.Module):
     """
     A helper Module that performs 2 convolutions and 1 UpConvolution.
-    A LeakyReLU activation and optionally a BatchNorm follows each convolution.
+    A ReLU activation and optionally a BatchNorm follows each convolution.
     """
     def __init__(self, in_channels, out_channels, dim, merge_mode="concat",
                  up_mode="transpose", batchnorm=True):

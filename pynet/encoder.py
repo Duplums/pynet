@@ -19,7 +19,7 @@ import numpy as np
 # Package import
 import pynet.models as models
 from pynet.core import Base
-
+from pynet.utils import tensor2im
 
 class UNetEncoder(Base):
     """ UNet (2014) by Long and Shelhamer.
@@ -86,6 +86,19 @@ class UNetEncoder(Base):
             loss_name=loss_name,
             metrics=metrics,
             use_cuda=use_cuda,
-            pretrained_path=pretrained_path
+            pretrained_path=pretrained_path,
             **kwargs)
+
+    # TODO: modify the "outputs" since it should be retrieved automatically
+    def visualize_data(self, visualizer, inputs, targets, outputs):
+        assert inputs.shape == outputs.shape
+        # in our case, inputs == targets
+        N, b_shape = inputs.shape[0], inputs.shape[1:]
+        visuals = np.array([tensor2im(inputs), tensor2im(outputs)], dtype=np.float32) # shape 2xNxCxHxW(xD) (if 3D)
+        visuals = visuals.swapaxes(0, 1).reshape((2*N,) + b_shape)
+        labels = np.array([['Input pic {}'.format(k), 'Output pic {}'.format(k)] for k in range(inputs.shape[0])]).flatten()
+
+        visualizer.display_images(visuals, labels, ncols=2)
+
+
 

@@ -28,6 +28,7 @@ from sklearn.utils import gen_batches
 # Package import
 from pynet.utils import checkpoint
 from pynet.history import History
+from pynet.visualization import Visualizer
 from pynet.observable import Observable
 import pynet.metrics as mmetrics
 
@@ -117,18 +118,33 @@ class Base(Observable):
         self.device = torch.device("cuda" if use_cuda else "cpu")
         self.model = self.model.to(self.device)
 
-    def global_training(self, train_loader, validation_loader=None, nb_epochs=100):
+    def global_training(self, train_loader, validation_loader=None, nb_epochs=100,
+                        checkpoint_dir=None, nb_epochs_per_saving=None, use_visdom=False):
         history = History(name="training")
+        visualizer = None
+        if use_visdom:
+            try:
+                visualizer = Visualizer(history)
+            except Exception as e:
+                print("Error while initializing the visualizer: {}".format(e))
+                visualizer = None
+
         for epoch in range(1, nb_epochs + 1):
-            self.train(train_loader, epoch, history)
+            self.train(train_loader, epoch, history, visualizer)
             history.summary() # prints the summary of the current training
             if validation_loader is not None:
                 losses = self.validate(validation_loader)
-                print('Validation loss avg: {.2f}'.format(np.mean([l.cpu().numpy() for l in losses])))
+                print('Validation loss avg: {.2f}'.format(np.mean(losses)))
+            if checkpoint_dir is not None and epoch % nb_epochs_per_saving == 0:
+                checkpoint(
+                    model=self.model,
+                    epoch=epoch,
+                    outdir=checkpoint_dir)
+                history.save(outdir=checkpoint_dir, epoch=epoch)
         return history
 
 
-    def train(self, train_loader, epoch, history):
+    def train(self, train_loader, epoch, history, visualizer=None):
         """ train the models according to the incoming data from the data loader. This training is only over
             one epoch so it does not care about the stopping criterion.
 
@@ -136,6 +152,7 @@ class Base(Observable):
             train_loader: a DataLoader that produces multiple batches of Tensor data
             epoch: the current epoch
             history: a History object used for visualization
+            visualizer: Visualizer object to plot on visdom metrics and images from the history
         :return: basically the history of the training (containing all the metrics, loss, ...)
         """
         assert isinstance(train_loader, DataLoader)
@@ -155,13 +172,18 @@ class Base(Observable):
             loss = self.loss(outputs, targets)
             # Computes the gradient for all tensors that "requires_grad"
             loss.backward()
-            # Then do the actual SGD
+            # Then do the actual optimization step (SGD, or ADAM, AdaGrad...)
             self.optimizer.step()
             # Saves all the useful metrics and the loss
             for (name, metric) in self.metrics.items():
                 history.log((epoch, i), name=metric(outputs, targets))
-            history.log((epoch, i), loss=loss)
-
+            history.log((epoch, i), loss=float(loss))
+            if i % 5 == 0:
+                history.summary()
+                if visualizer is not None:
+                    visualizer.refresh_current_metrics()
+                    self.visualize_data(visualizer, inputs, targets,
+                                        outputs)  # General method in case of special networks (GAN, AE, ...)
         return history
 
     def validate(self, validation_loader):
@@ -178,7 +200,7 @@ class Base(Observable):
                 outputs = self.model(inputs)
                 loss = self.loss(outputs, targets)
                 # Saves the loss
-                losses.append(loss)
+                losses.append(float(loss))
         return losses
 
 
@@ -241,7 +263,7 @@ class Base(Observable):
                     if name not in values:
                         values[name] = 0
                     values[name] += metric(y_pred, batch_y) / nb_batch
-            history.log((fold, epoch), loss=loss, **values)
+            history.log((fold, epoch), loss=float(loss), **values)
             history.summary()
             if checkpointdir is not None:
                 checkpoint(
@@ -297,3 +319,6 @@ class Base(Observable):
         """
         y_probs = self.predict_proba(X)
         return np.argmax(y_probs, axis=1)
+
+    def visualize_data(self, visualizer, *args, **kwargs):
+        pass
