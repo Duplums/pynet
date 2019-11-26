@@ -70,16 +70,6 @@ class Visualizer:
         # First, rescale the images
         images = np.nan_to_num([(img - np.min(img))/(np.max(img) - np.min(img)) for img in images])
 
-        # If the images are 3D, display only the 3 cuts: x-axis, y-axis and z-axis
-        if D is not None:
-            ncols = 3 * ncols
-            labels = np.array([['%s (x-axis)'% l, '%s (y-axis)'% l, '%s (z-axis)'% l] for l in labels]).flatten()
-            list_images = []
-            for img in images:
-                list_images.extend([img[:, H//2, :, :], img[:, :, W//2, :], img[:, :, :, D//2]])
-            images = list_images
-            N = 3*N
-
         table_css = """<style>
                         table {border-collapse: separate; border-spacing: 4px; white-space: nowrap; text-align: center}
                         table td {width: % dpx; height: % dpx; padding: 4px; outline: 4px solid black}
@@ -96,9 +86,17 @@ class Visualizer:
                 label_html += '<tr>%s</tr>' % label_html_row
 
         # Display the images in one visdom panel
+        if D is not None:
+            self.vis.images(images[:,:,H//2,:,:], nrow=ncols, win=self.free_display_id,
+                            padding=2, opts=dict(title="X-axis cut accross subjects"))
+            self.vis.images(images[:,:,:,W//2,:], nrow=ncols, win=self.free_display_id+1,
+                            padding=2, opts=dict(title="Y-axis cut accross subjects"))
+            self.vis.images(images[:,:,:,:,D//2], nrow=ncols, win=self.free_display_id+2,
+                            padding=2, opts=dict(title="Z-axis cut accross subjects"))
+        else:
+            self.vis.images(images, nrow=ncols, win=self.free_display_id,
+                            padding=2, opts=dict(title="All images"))
 
-        self.vis.images(images, nrow=ncols, win=self.free_display_id,
-                        padding=2)
         #self.vis.text(table_css + label_html, win=self.free_display_id + 1)
 
 

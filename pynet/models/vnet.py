@@ -1,18 +1,26 @@
 import torch.nn as nn
 import torch
+import numpy as np
 
 class VNet(nn.Module):
 
 
     def __init__(self, nb_classes, in_channels=1, depth=5,
-                 start_filters=16, batchnorm=True):
+                 start_filters=16, batchnorm=True, mode="AE", input_size=None):
+        assert mode in ['AE', 'classifier'], "Unknown mode selected, currently supported are: 'AE' and 'classifier'"
+        if mode == 'classifier' and (input_size is None or len(input_size) != 3):
+            raise ValueError('The input size must be set as HxWxD')
+
         super(VNet, self).__init__()
 
+        self.mode = mode
+        self.input_size = input_size
         self.nb_classes = nb_classes
         self.in_channels = in_channels
         self.start_filters = start_filters
 
-        self.up = []
+        if self.mode == "AE":
+            self.up = []
         self.down = []
 
         nconvs = [min(cnt+1, 3) for cnt in range(depth)] # Nb of convs in each Down module
@@ -27,35 +35,50 @@ class VNet(nn.Module):
                      nconv=nconvs[cnt], dconv=dconv,
                      batchnorm=batchnorm))
 
-        # Create the decoder pathway
-        # - careful! decoding only requires depth-1 blocks
-        for cnt in range(depth - 1):
-            in_channels = out_channels
-            out_channels = in_channels // 2
-            self.up.append(
-                Up(in_channels, out_channels,
-                   nconv=nconvs[-1-cnt],
-                   batchnorm=batchnorm))
+        if self.mode == "AE":
+            # Create the decoder pathway
+            # - careful! decoding only requires depth-1 blocks
+            for cnt in range(depth - 1):
+                in_channels = out_channels
+                out_channels = in_channels // 2
+                self.up.append(
+                    Up(in_channels, out_channels,
+                       nconv=nconvs[-1-cnt],
+                       batchnorm=batchnorm))
 
         # Add the list of modules to current module
         self.down = nn.ModuleList(self.down)
-        self.up = nn.ModuleList(self.up)
+        if self.mode == "AE":
+            self.up = nn.ModuleList(self.up)
 
         # Get ouptut segmentation
-        self.conv_final = nn.Conv3d(out_channels, self.nb_classes, kernel_size=1, groups=1, stride=1)
+        if self.mode == "AE":
+            self.final_layer = nn.Conv3d(out_channels, self.nb_classes, kernel_size=1, groups=1, stride=1)
+        else: # Classification
+            (h, w, d) = np.array(self.input_size) // 2**(depth -1)
+            self.final_layer = nn.Sequential(
+            nn.Linear(out_channels*h*w*d, 128),
+            nn.ReLU(True),
+            nn.Dropout(),
+            nn.Linear(128, 128),
+            nn.ReLU(True),
+            nn.Dropout(),
+            nn.Linear(128, self.nb_classes))
 
-        # Kernel initializer
-        self.kernel_initializer()
+        # Weight initialization
+        self.weight_initializer()
 
-    def kernel_initializer(self):
+    def weight_initializer(self):
         for module in self.modules():
-            self.init_weight(module)
-
-    @staticmethod
-    def init_weight(module):
-        if isinstance(module, nn.ConvTranspose3d) or isinstance(module, nn.Conv3d):
-            nn.init.xavier_normal_(module.weight)
-            nn.init.constant_(module.bias, 0)
+            if isinstance(module, nn.ConvTranspose3d) or isinstance(module, nn.Conv3d):
+                nn.init.xavier_normal_(module.weight)
+                nn.init.constant_(module.bias, 0)
+            elif isinstance(module, nn.BatchNorm2d):
+                nn.init.constant_(module.weight, 1)
+                nn.init.constant_(module.bias, 0)
+            elif isinstance(module, nn.Linear):
+                nn.init.normal_(module.weight, 0, 0.01)
+                nn.init.constant_(module.bias, 0)
 
     def forward(self, x):
         encoder_outs = []
@@ -67,7 +90,7 @@ class VNet(nn.Module):
             x_up = encoder_outs[cnt]
             x = module(x, x_up)
 
-        x = self.conv_final(x)
+        x = self.final_layer(x)
         return x
 
 class LUConv(nn.Module):
@@ -82,7 +105,7 @@ class LUConv(nn.Module):
             self.conv = nn.ConvTranspose3d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=bias)
         if batchnorm:
             self.bn = nn.BatchNorm3d(out_channels)
-        self.relu = nn.ReLU()
+        self.relu = nn.ReLU(True)
         self.ops = nn.Sequential(self.conv, self.bn, self.relu)
 
     def forward(self, x):
@@ -109,6 +132,7 @@ class Down(nn.Module):
         super(Down, self).__init__()
 
         self.dconv = dconv
+        self.in_channels = in_channels
         if dconv:
             self.down_conv = NConvs(in_channels, out_channels, 1, kernel_size=2, stride=2, batchnorm=batchnorm)
             self.nconvs = NConvs(out_channels, out_channels, nconv, kernel_size=5, stride=1,
@@ -124,7 +148,10 @@ class Down(nn.Module):
             x_down = x
         x_out = self.nconvs(x_down)
         # Add the input in order to learn only the residual
-        x = x_out + x_down
+        if self.in_channels == 1 or self.dconv:
+            x = x_out + x_down
+        else:
+            x = x_out
         return x
 
 class Up(nn.Module):

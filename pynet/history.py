@@ -87,7 +87,8 @@ class History(object):
         last_step = self.steps[-1]
         msg = "{:6s} {:15s}".format(self.name, repr(last_step))
         for key in self.metrics:
-            msg += "{:6s}:{:10f}  ".format(key, self.history[last_step][key])
+            if key in self.history[last_step]:
+                msg += "{:6s}:{:10f}  ".format(key, self.history[last_step][key])
         msg += "{}".format(str(self.get_total_time()))
         print(msg)
 

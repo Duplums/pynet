@@ -90,7 +90,7 @@ def checkpoint(model, epoch, fold, outdir, optimizer=None, **kwargs):
     **kwargs: others parameters to save during the training
     """
     outfile = os.path.join(
-        outdir, "model_{0}_epoch_{1}.pth".format(fold, epoch))
+        outdir, "{0}_{1}_epoch_{2}.pth".format(model.name, fold, epoch))
 
     if optimizer is not None:
         kwargs.update(optimizer_state_dict=optimizer.state_dict())

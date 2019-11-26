@@ -21,6 +21,7 @@ from torchvision import models
 import torch
 import torch.nn.functional as func
 from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import StepLR
 import tqdm
 import numpy as np
 from sklearn.utils import gen_batches
@@ -85,6 +86,11 @@ class Base(Observable):
                 raise ValueError("Loss '{0}' uknown: check available loss in "
                                  "'pytorch.nn'.")
             self.loss = getattr(torch.nn, loss_name)()
+        try:
+            self.loss_name = self.loss._get_name()
+        except AttributeError:
+            self.loss_name = "Loss"
+
         self.metrics = {}
         for name in (metrics or []):
             if name not in mmetrics.METRICS:
@@ -102,6 +108,9 @@ class Base(Observable):
                 lr=learning_rate,
                 **kwargs)
 
+        # Decrease the learning rate by 50% ever 2 epochs
+        self.scheduler = StepLR(self.optimizer, step_size=2, gamma=0.5)
+
         # If we want to restore some (or all) of the parameters already optimized during a previous training
         if pretrained_path is not None:
             checkpoint_ = torch.load(pretrained_path)
@@ -118,8 +127,13 @@ class Base(Observable):
         self.device = torch.device("cuda" if use_cuda else "cpu")
         self.model = self.model.to(self.device)
 
-    def global_training(self, train_loader, validation_loader=None, nb_epochs=100,
-                        checkpoint_dir=None, nb_epochs_per_saving=None, use_visdom=False):
+    def global_training(self, train_loader,
+                        validation_loader=None,
+                        nb_epochs=100,
+                        nb_fold=0,
+                        checkpoint_dir=None,
+                        nb_epochs_per_saving=None,
+                        use_visdom=False):
         history = History(name="training")
         visualizer = None
         if use_visdom:
@@ -130,17 +144,22 @@ class Base(Observable):
                 visualizer = None
 
         for epoch in range(1, nb_epochs + 1):
-            self.train(train_loader, epoch, history, visualizer)
-            history.summary() # prints the summary of the current training
+
             if validation_loader is not None:
-                losses = self.validate(validation_loader)
-                print('Validation loss avg: {.2f}'.format(np.mean(losses)))
+                losses = self.validate(validation_loader, epoch, history, visualizer)
+                print('Validation loss avg: %f' % np.mean(losses))
+
+            self.train(train_loader, epoch, history, visualizer)
+            self.scheduler.step()
+            history.summary() # prints the summary of the current training
+
             if checkpoint_dir is not None and epoch % nb_epochs_per_saving == 0:
                 checkpoint(
                     model=self.model,
+                    fold=nb_fold,
                     epoch=epoch,
                     outdir=checkpoint_dir)
-                history.save(outdir=checkpoint_dir, epoch=epoch)
+                history.save(outdir=checkpoint_dir, epoch=epoch, fold=nb_fold)
         return history
 
 
@@ -176,17 +195,17 @@ class Base(Observable):
             self.optimizer.step()
             # Saves all the useful metrics and the loss
             for (name, metric) in self.metrics.items():
-                history.log((epoch, i), name=metric(outputs, targets))
-            history.log((epoch, i), loss=float(loss))
+                history.log((epoch, i), **{name: metric(outputs, targets)})
+            history.log((epoch, i), **{self.loss_name: float(loss)})
             if i % 5 == 0:
                 history.summary()
                 if visualizer is not None:
                     visualizer.refresh_current_metrics()
-                    self.visualize_data(visualizer, inputs, targets,
-                                        outputs)  # General method in case of special networks (GAN, AE, ...)
+                    #self.visualize_data(visualizer, inputs, targets,
+                    #                    outputs)  # General method in case of special networks (GAN, AE, ...)
         return history
 
-    def validate(self, validation_loader):
+    def validate(self, validation_loader, epoch, history, visualizer=None):
         # turns the model in test mode
         self.model.eval()
         losses = []
@@ -201,6 +220,9 @@ class Base(Observable):
                 loss = self.loss(outputs, targets)
                 # Saves the loss
                 losses.append(float(loss))
+        history.log((epoch, 0), validation_loss=np.mean(losses))
+        if visualizer is not None:
+            visualizer.refresh_current_metrics()
         return losses
 
 

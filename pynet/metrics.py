@@ -22,6 +22,9 @@ def accuracy(y_pred, y):
     accuracy = y_pred.eq(y).sum().cpu().numpy() / y.size()[0]
     return accuracy
 
+def RMSE(y_pred, y):
+    rmse = torch.sqrt(torch.mean((y_pred - y)**2)).detach().cpu().numpy()
+    return float(rmse)
 
 def _dice(y_pred, y):
     """ Binary dice indice adapted to pytorch tensors.
@@ -53,4 +56,5 @@ def dice_loss(y_pred, y):
 METRICS = {
     "accuracy": accuracy,
     "multiclass_dice": multiclass_dice,
+    "RMSE": RMSE
 }

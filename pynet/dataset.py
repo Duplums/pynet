@@ -14,17 +14,146 @@ Module that provides functions to load and split a dataset.
 
 
 import torch
-from torch.utils.data import Dataset
-
+from torch.utils.data import Dataset, DataLoader
 import nibabel
 import progressbar
 import numpy as np
 import pandas as pd
 from PIL import Image
-from PIL import ImageMath
 import cv2
-from joblib import Parallel, delayed
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, KFold, StratifiedKFold, ShuffleSplit, StratifiedShuffleSplit
+
+
+class DataManager:
+
+    def __init__(self, input_path, dtype, shape, output_path, outputs,
+                 number_of_folds, batch_size,
+                 labels=None,
+                 test_size=0.1,
+                 stratify=False,
+                 transforms=None,
+                 **dataloader_kwargs):
+        """ Splits an input binary memory-mapped dataset in test, train and validation.
+        This function stratifies the data.
+
+        Parameters
+        ----------
+        input_path: str
+            the path to the binary memory-mapped data that will be splited.
+        shape: tuple
+            the shape of the input data
+        dtype: np.dtype
+            type of the inputs
+        output_path: str
+            the path to a .csv file
+        outputs: list of str
+            the name of the column(s) containing the ouputs.
+        number_of_folds: int
+            the number of folds that will be used in the cross validation.
+        batch_size: int
+            the size of each mini-batch (only applied on the train set).
+        labels: str
+            the name of the column containing the labels (required if stratify=True)
+        stratify: bool
+            whether the data should be stratified (ie the % of samples / per class is preserved) or not
+        transforms: list of callable
+            transforms a list of samples with pre-defined transformation
+            ...
+        test_size: float, default 0.1
+            should be between 0.0 and 1.0 and represent the proportion of the
+            dataset to include in the test split.
+        """
+
+        df = pd.read_csv(output_path)
+        self.inputs = np.memmap(input_path, dtype=dtype, mode='r+', shape=shape)
+        self.dtype = dtype
+        self.outputs = df[outputs].values
+        self.labels = df[labels] if labels is not None else labels
+        self.batch_size = batch_size
+        self.data_loader_kwargs = dataloader_kwargs
+        self.transforms = transforms
+
+        # 1st step: split into train/test (get only indices)
+        if stratify:
+            splitter = StratifiedShuffleSplit(n_splits=1, random_state=0, test_size=test_size)
+            train_index, test_index = next(splitter.split(self.inputs, self.labels))
+        else:
+            splitter = ShuffleSplit(n_splits=1, random_state=0, test_size=test_size)
+            train_index, test_index = next(splitter.split(self.inputs, self.outputs))
+
+
+        self.dataset = {
+            'test': MMAPDataset(self.inputs, self.outputs,
+                                test_index),
+            'train': [],
+            'validation': []
+        }
+
+        # 2nd step: split the training set into K folds (K-1 for training, 1 for validation, K times)
+        if stratify:
+            Kfold_splitter = StratifiedKFold(n_splits=number_of_folds, shuffle=True, random_state=0)
+            gen = Kfold_splitter.split(np.ones(len(train_index)), self.labels[train_index])
+        else:
+            Kfold_splitter = KFold(n_splits=number_of_folds, shuffle=True, random_state=0)
+            gen = Kfold_splitter.split(np.ones(len(train_index)))
+
+        for fold_train_index, fold_val_index in gen:
+            train_dataset = MMAPDataset(
+                self.inputs, self.outputs,
+                train_index[fold_train_index])
+            val_dataset = MMAPDataset(
+                self.inputs, self.outputs,
+                train_index[fold_val_index])
+            self.dataset["train"].append(train_dataset)
+            self.dataset["validation"].append(val_dataset)
+
+    def collate_fn(self, list_samples):
+        # List of tuples (input, output)
+        for k in range(len(list_samples)):
+            input_, target_ = list_samples[k]
+            for tf in self.transforms:
+                input_ = tf(input_)
+            list_samples[k] = torch.as_tensor(input_), torch.as_tensor(target_)
+        return torch.stack([s[0] for s in list_samples], dim=0), torch.stack([s[1] for s in list_samples], dim=0).float()
+
+
+    def get_dataloader(self, test=False, train=True, num_fold=0, with_validation=True):
+        if test:
+            return DataLoader(self.dataset["test"],
+                              batch_size=self.batch_size,
+                              collate_fn=DataManager.collate_fn,
+                              **self.data_loader_kwargs)
+        elif train:
+            if num_fold is None:
+                raise ValueError("num_fold arg must be set when generating the training data loader.")
+            train_loader =  DataLoader(self.dataset["train"][num_fold],
+                                       batch_size=self.batch_size,
+                                       collate_fn=self.collate_fn,
+                                       **self.data_loader_kwargs)
+            if with_validation:
+                val_loader = DataLoader(self.dataset["validation"][num_fold],
+                                        batch_size=self.batch_size,
+                                        collate_fn=self.collate_fn,
+                                        **self.data_loader_kwargs)
+                return train_loader, val_loader
+            return train_loader
+
+
+class MMAPDataset(Dataset):
+
+    def __init__(self, inputs, outputs, indices):
+        # indices == the list of index that is considered in this dataset.
+        assert len(inputs) == len(outputs)
+        self.inputs = inputs
+        self.outputs = outputs
+        self.indices = indices
+
+    # Gets only the index needed (thanks to memory mapping)
+    def __getitem__(self, item):
+        return self.inputs[self.indices[item]], self.outputs[self.indices[item]]
+
+    def __len__(self):
+        return len(self.indices)
 
 
 def split_dataset(path, dataloader, inputs, label, number_of_folds,

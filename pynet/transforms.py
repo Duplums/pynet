@@ -17,6 +17,41 @@ is loaded.
 # Third party import
 import numpy as np
 
+class Normalize:
+    def __init__(self, mean=0.0, std=1.0, eps=1e-8):
+        self.mean=mean
+        self.std=std
+        self.eps=eps
+
+    def __call__(self, arr):
+        assert type(arr) == np.ndarray
+        return self.std * (arr - np.mean(arr))/(np.std(arr) + self.eps) + self.mean
+
+
+class CenterCrop(object):
+
+    def __init__(self, shape):
+        self.shape = shape
+
+    def __call__(self, arr):
+        assert type(arr) == np.ndarray
+        assert type(self.shape) == int or len(self.shape) == len(arr.shape)
+
+        img_shape = arr.shape
+        if type(self.shape) == int:
+            size = [self.shape for _ in range(len(self.shape))]
+        else:
+            size = np.copy(self.shape)
+        indexes = []
+        for ndim in range(len(img_shape)):
+            if size[ndim] > img_shape[ndim] or size[ndim] < 0:
+                size[ndim] = img_shape[ndim]
+            delta_before = int((img_shape[ndim] - size[ndim]) / 2.0)
+            indexes.append('%i:%i' % (delta_before, delta_before + size[ndim]))
+
+        return eval('arr[%s]' % ','.join(indexes))
+
+
 
 class ZeroPadding(object):
     """ A class to zero pad an image.
