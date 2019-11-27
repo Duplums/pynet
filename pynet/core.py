@@ -82,15 +82,10 @@ class Base(Observable):
         if "model" in kwargs:
             self.model = kwargs.pop("model")
         if self.loss is None:
-            if loss_name not in dir(torch.nn):
-                raise ValueError("Loss '{0}' uknown: check available loss in "
-                                 "'pytorch.nn'.")
-            self.loss = getattr(torch.nn, loss_name)()
-        try:
-            self.loss_name = self.loss._get_name()
-        except AttributeError:
-            self.loss_name = "Loss"
-
+            if loss_name in dir(torch.nn):
+                self.loss = getattr(torch.nn, loss_name)()
+            else:
+                raise ValueError("The loss must be implemented")
         self.metrics = {}
         for name in (metrics or []):
             if name not in mmetrics.METRICS:
@@ -144,11 +139,9 @@ class Base(Observable):
                 visualizer = None
 
         for epoch in range(1, nb_epochs + 1):
-
             if validation_loader is not None:
                 losses = self.validate(validation_loader, epoch, history, visualizer)
                 print('Validation loss avg: %f' % np.mean(losses))
-
             self.train(train_loader, epoch, history, visualizer)
             self.scheduler.step()
             history.summary() # prints the summary of the current training
@@ -188,7 +181,7 @@ class Base(Observable):
             # Computes the output
             outputs = self.model(inputs)
             # Computes the objective function
-            loss = self.loss(outputs, targets)
+            loss = self.compute_loss(outputs, targets, history, epoch, i)
             # Computes the gradient for all tensors that "requires_grad"
             loss.backward()
             # Then do the actual optimization step (SGD, or ADAM, AdaGrad...)
@@ -196,7 +189,6 @@ class Base(Observable):
             # Saves all the useful metrics and the loss
             for (name, metric) in self.metrics.items():
                 history.log((epoch, i), **{name: metric(outputs, targets)})
-            history.log((epoch, i), **{self.loss_name: float(loss)})
             if i % 5 == 0:
                 history.summary()
                 if visualizer is not None:
@@ -217,13 +209,24 @@ class Base(Observable):
                 targets = targets.to(self.device)
                 # Computes directly the output
                 outputs = self.model(inputs)
-                loss = self.loss(outputs, targets)
+                loss = self.compute_loss(outputs, targets)
                 # Saves the loss
                 losses.append(float(loss))
         history.log((epoch, 0), validation_loss=np.mean(losses))
         if visualizer is not None:
             visualizer.refresh_current_metrics()
         return losses
+
+
+    def compute_loss(self, outputs, targets, history=None, epoch=None, it=None):
+        loss = self.loss(outputs, targets)
+        if history is not None:
+            history.log((epoch, it), **{type(self.loss).__name__: float(loss)})
+
+        if hasattr(self.loss, 'log_errors') and history is not None:
+            self.loss.log_errors(history, epoch, it)
+
+        return loss
 
 
     def _gen_batches(self, n_samples):

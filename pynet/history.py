@@ -78,9 +78,14 @@ class History(object):
         """
         return list(self.history.keys())
 
-    def __getitem__(self, metric):
-        steps = self.steps
-        data = np.array([self.history[step].get(metric) for step in steps])
+    def __getitem__(self, metric, with_nan=True):
+
+        steps = []
+        data = []
+        for step in self.steps:
+            if metric in self.history[step] or with_nan:
+                steps.append(step)
+                data.append(self.history[step].get(metric))
         return steps, data
 
     def summary(self):

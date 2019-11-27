@@ -222,3 +222,27 @@ def tensor2im(tensor):
         if isinstance(tensor, torch.Tensor):
             return tensor.detach().cpu().numpy()
     return tensor
+
+
+# def concatenate_datasets(input_paths, output_paths):
+#     import pandas as pd
+#     df_conc = []
+#     for out in output_paths:
+#         df = pd.read_csv(out, header=0)
+#         df_conc.append(df)
+#     out_frame = pd.concat(df_conc, axis=0, ignore_index=True)
+#     out_frame.to_csv(os.path.join(os.path.dirname(output_paths[0]), 'all_mwp1_gs_participants.csv'))
+#
+#     out_array = []
+#     for i_path in input_paths:
+#         X = np.load(i_path)
+#         out_array.append(X)
+#     out = np.concatenate(out_array, axis=0)
+#     del out_array
+#     np.save(os.path.join(os.path.dirname(output_paths[0]), 'all_mwp1_gs_data-32.npy'), out)
+
+
+
+
+
+

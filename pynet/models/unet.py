@@ -206,8 +206,8 @@ class Classifier(nn.Module):
         self.input_size = input_size
         self.num_classes = num_classes
         self.dim = dim
-        # Assuming input 8x9x8 (x256 filters) then we could use a 2x3x2 kernels for each input (x256)
-        # Then we use  (2x3x2)x256=3072  kernels of size (8, 9, 8) to extract the relevant info.
+        # Assuming input 8x9x8 (x256 filters) then we could use a 1x2x1 kernels for each input (x256)
+        # Then we use  2x256=512  kernels of size (8, 9, 8) to extract the relevant info.
         self.conv = eval(
             "nn.Conv{dim}({in_channels}, {out_channels}, {kernel_size})".format(dim=self.dim,
                                                                                in_channels=self.input_size[0],

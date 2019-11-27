@@ -39,15 +39,13 @@ class Visualizer:
                 self.free_display_id = self.free_display_id + 1
 
     def refresh_current_metrics(self):
-        all_steps = self.history.steps
         self.refresh_display_ids_metrics()
-        if len(all_steps) > 0 and type(all_steps[0]) == tuple:
-            # We assume that the steps are formated as (epoch, iteration)
-            max_iter = max([it for (epoch, it) in all_steps])
-            x_axis = [epoch + float(it)/(max_iter+1) for (epoch, it) in all_steps]
-        else:
-            x_axis = all_steps
         for (metric, id) in self.display_ids.items():
+            x_axis, y = self.history[metric]
+            if len(x_axis) > 0 and type(x_axis[0]) == tuple:
+                # We assume that the steps are formated as (epoch, iteration)
+                max_iter = max([it for (epoch, it) in x_axis])
+                x_axis = [epoch + float(it) / (max_iter + 1) for (epoch, it) in x_axis]
             self.vis.line(X=x_axis,
                           Y=self.history[metric][1],
                           opts={'title': metric + ' per epoch',

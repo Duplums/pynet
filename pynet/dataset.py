@@ -26,12 +26,14 @@ from sklearn.model_selection import train_test_split, KFold, StratifiedKFold, Sh
 
 class DataManager:
 
-    def __init__(self, input_path, dtype, shape, output_path, outputs,
+    def __init__(self, input_path, output_path, outputs,
                  number_of_folds, batch_size,
                  labels=None,
+                 projection_labels=None,
                  test_size=0.1,
                  stratify=False,
                  transforms=None,
+                 output_transforms=None,
                  **dataloader_kwargs):
         """ Splits an input binary memory-mapped dataset in test, train and validation.
         This function stratifies the data.
@@ -40,14 +42,12 @@ class DataManager:
         ----------
         input_path: str
             the path to the binary memory-mapped data that will be splited.
-        shape: tuple
-            the shape of the input data
-        dtype: np.dtype
-            type of the inputs
         output_path: str
             the path to a .csv file
         outputs: list of str
             the name of the column(s) containing the ouputs.
+        projection_labels: dict
+            selects only the data that match the conditions in the dict {<column_name>: <value>}
         number_of_folds: int
             the number of folds that will be used in the cross validation.
         batch_size: int
@@ -65,26 +65,27 @@ class DataManager:
         """
 
         df = pd.read_csv(output_path)
-        self.inputs = np.memmap(input_path, dtype=dtype, mode='r+', shape=shape)
-        self.dtype = dtype
+        projected_index = DataManager.get_projected_index(df, projection_labels)
+
+        self.inputs = np.load(input_path, mmap_mode='r')
         self.outputs = df[outputs].values
-        self.labels = df[labels] if labels is not None else labels
+        self.labels = df[labels].values if labels is not None else labels
         self.batch_size = batch_size
         self.data_loader_kwargs = dataloader_kwargs
         self.transforms = transforms
+        self.output_transforms = output_transforms
 
         # 1st step: split into train/test (get only indices)
         if stratify:
             splitter = StratifiedShuffleSplit(n_splits=1, random_state=0, test_size=test_size)
-            train_index, test_index = next(splitter.split(self.inputs, self.labels))
+            train_index, test_index = next(splitter.split(np.ones(len(projected_index)), self.labels[projected_index]))
         else:
             splitter = ShuffleSplit(n_splits=1, random_state=0, test_size=test_size)
-            train_index, test_index = next(splitter.split(self.inputs, self.outputs))
-
+            train_index, test_index = next(splitter.split(np.ones(len(projected_index)), self.outputs[projected_index]))
 
         self.dataset = {
             'test': MMAPDataset(self.inputs, self.outputs,
-                                test_index),
+                                projected_index[test_index]),
             'train': [],
             'validation': []
         }
@@ -92,7 +93,7 @@ class DataManager:
         # 2nd step: split the training set into K folds (K-1 for training, 1 for validation, K times)
         if stratify:
             Kfold_splitter = StratifiedKFold(n_splits=number_of_folds, shuffle=True, random_state=0)
-            gen = Kfold_splitter.split(np.ones(len(train_index)), self.labels[train_index])
+            gen = Kfold_splitter.split(np.ones(len(train_index)), self.labels[projected_index][train_index])
         else:
             Kfold_splitter = KFold(n_splits=number_of_folds, shuffle=True, random_state=0)
             gen = Kfold_splitter.split(np.ones(len(train_index)))
@@ -100,10 +101,10 @@ class DataManager:
         for fold_train_index, fold_val_index in gen:
             train_dataset = MMAPDataset(
                 self.inputs, self.outputs,
-                train_index[fold_train_index])
+                projected_index[train_index[fold_train_index]])
             val_dataset = MMAPDataset(
                 self.inputs, self.outputs,
-                train_index[fold_val_index])
+                projected_index[train_index[fold_val_index]])
             self.dataset["train"].append(train_dataset)
             self.dataset["validation"].append(val_dataset)
 
@@ -111,8 +112,11 @@ class DataManager:
         # List of tuples (input, output)
         for k in range(len(list_samples)):
             input_, target_ = list_samples[k]
-            for tf in self.transforms:
+            for tf in (self.transforms or []):
                 input_ = tf(input_)
+            for tf in (self.output_transforms or []):
+                target_ = tf(target_)
+
             list_samples[k] = torch.as_tensor(input_), torch.as_tensor(target_)
         return torch.stack([s[0] for s in list_samples], dim=0), torch.stack([s[1] for s in list_samples], dim=0).float()
 
@@ -138,9 +142,17 @@ class DataManager:
                 return train_loader, val_loader
             return train_loader
 
+    @staticmethod
+    def get_projected_index(df, projection_labels):
+        if projection_labels is None:
+            return df.index
+        projected_index = df.index
+        for (col, val) in projection_labels.items():
+            projected_index = projected_index.intersection(df[df[col] == val].index)
+        return projected_index
+
 
 class MMAPDataset(Dataset):
-
     def __init__(self, inputs, outputs, indices):
         # indices == the list of index that is considered in this dataset.
         assert len(inputs) == len(outputs)
