@@ -243,6 +243,27 @@ def tensor2im(tensor):
 
 
 
+def linear_reg_plots(Y_pred, Y_true):
+    import matplotlib.pyplot as plt
+    from sklearn.linear_model import LinearRegression
+    from scipy.stats import pearsonr
+
+    reg = LinearRegression().fit(Y_pred, Y_true)
+    coefs, intercepts = reg.coef_, reg.intercept_
+    (r, pval) = pearsonr(Y_pred.flatten(), Y_true.flatten())
+    MAE = np.mean(np.abs(Y_pred - Y_true))
+    RMSE = np.sqrt(np.mean(np.abs(Y_pred-Y_true)**2))
+
+    plt.scatter(Y_pred, Y_true)
+    perfect, = plt.plot(Y_pred, Y_pred, color='red', label='Perfect case')
+    reg_case, = plt.plot(Y_pred, [coefs[0]*y[0]+intercepts[0] for y in Y_pred], color='green', label='Linear Regression')
+    plt.legend(handles=[perfect, reg_case])
+    plt.xlabel('Predicted age')
+    plt.ylabel('True age')
+    plt.title('Linear regression: $R^2={R2:.2f}$, $r={r:.2f}$ (p-value {pval:.2f} for H0=correlate),\n'
+              'MAE={mae:.2f}, RMSE={rmse:.2f}'.format(R2=reg.score(Y_pred, Y_true), r=r, pval=pval, mae=MAE, rmse=RMSE))
+
+
 
 
 
