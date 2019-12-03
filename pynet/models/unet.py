@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import torch.nn.functional as func
-
+from pynet.utils import tensor2im
 
 
 class UNet(nn.Module):
@@ -57,7 +57,7 @@ class UNet(nn.Module):
             number of convolutional filters for the first conv.
         up_mode: string, default 'transpose'
             type of upconvolution. Choices: 'transpose' for transpose
-            convolution, 'upsample' for nearest neighbour upsampling.
+            convolution, 'upsample' for nearest neighbour upsamplin, 'max_unpool' for max unpooling (with indices)
         down_mode: string, default 'maxpool'
             Choices: 'maxpool' for maxpool, 'conv' for convolutions with stride=2
         merge_mode: str, default 'concat', can be 'add' or None
@@ -88,7 +88,9 @@ class UNet(nn.Module):
         else:
             raise ValueError("'{}' is not a valid mode. Should be in 'seg' "
                              "or 'classif' mode.".format(mode))
-        if up_mode in ("transpose", "upsample"):
+        if up_mode in ("transpose", "upsample", "max_unpool"):
+            if down_mode != "maxpool" and up_mode == "max_unpool":
+                raise ValueError("The down-mode must be 'maxpool' if the up-mode is 'max_unpool'")
             self.up_mode = up_mode
         else:
             raise ValueError(
@@ -182,14 +184,23 @@ class UNet(nn.Module):
 
     def forward(self, x):
         encoder_outs = []
+        encoder_masks = []
         for module in self.down:
-            x = module(x)
+            if module.down_mode == "maxpool" and module.pooling:
+                x, indices = module(x)
+                encoder_masks.append(indices)
+            else:
+                x = module(x)
+                encoder_masks.append(None)
             encoder_outs.append(x)
+
         if self.mode == "seg":
             encoder_outs = encoder_outs[:-1][::-1]
+            encoder_masks = encoder_masks[::-1]
             for cnt, module in enumerate(self.up):
                 x_up = encoder_outs[cnt]
-                x = module(x, x_up)
+                x_mask = encoder_masks[cnt]
+                x = module(x, x_up, x_mask)
             # No softmax is used. This means you need to use
             # nn.CrossEntropyLoss in your training script,
             # as this module includes a softmax already.
@@ -198,6 +209,17 @@ class UNet(nn.Module):
             # No softmax used
             x = self.classifier(x)
         return x
+
+    def visualize_data(self, visualizer, inputs, outputs):
+        assert inputs.shape == outputs.shape
+        # in our case, inputs == targets
+        N, b_shape = inputs.shape[0], inputs.shape[1:]
+        visuals = np.array([tensor2im(inputs), tensor2im(outputs)], dtype=np.float32) # shape 2xNxCxHxW(xD) (if 3D)
+        visuals = visuals.swapaxes(0, 1).reshape((2*N,) + b_shape)
+        labels = np.array([['Input pic {}'.format(k), 'Output pic {}'.format(k)] for k in range(inputs.shape[0])]).flatten()
+
+        visualizer.display_images(visuals, labels, ncols=2)
+
 
 
 class Classifier(nn.Module):
@@ -261,12 +283,15 @@ def UpConv(in_channels, out_channels, dim, mode="transpose"):
         return eval(
             "nn.ConvTranspose{0}(in_channels, out_channels, kernel_size=2, "
             "stride=2)".format(dim)) 
-    else:
+    elif mode == "upsample":
         # out_channels is always going to be the same as in_channels
         return nn.Sequential(collections.OrderedDict([
             ("up", nn.Upsample(mode="nearest", scale_factor=2)),
             ("conv1x", Conv1x1x1(in_channels, out_channels, dim))]))
-
+    else:
+        return eval(
+            "nn.MaxUnpool{0}(2)".format(dim)
+        )
 
 def Conv1x1x1(in_channels, out_channels, dim, groups=1):
     return eval(
@@ -287,7 +312,7 @@ class Down(nn.Module):
         self.down_mode = down_mode
         self.skip_connections = skip_connections
         if self.down_mode == "maxpool":
-            self.maxpool = eval("nn.MaxPool{0}(2)".format(dim))
+            self.maxpool = eval("nn.MaxPool{0}(2, return_indices=True)".format(dim))
             self.doubleconv = DoubleConv(in_channels, out_channels, dim, batchnorm=batchnorm)
         else:
             self.downconv = eval("nn.Conv{0}(in_channels, out_channels, kernel_size=2, stride=2)".format(dim))
@@ -299,7 +324,7 @@ class Down(nn.Module):
     def forward(self, x):
         if self.down_mode == "maxpool":
             if self.pooling:
-                x = self.maxpool(x)
+                x, indices = self.maxpool(x)
             x = self.doubleconv(x)
         else:
             if self.skip_connections:
@@ -313,6 +338,8 @@ class Down(nn.Module):
                 if self.pooling:
                     x = self.downconv(x)
                 x = self.doubleconv(x)
+        if self.down_mode == "maxpool" and self.pooling:
+            return x, indices
         return x
 
 
@@ -326,14 +353,18 @@ class Up(nn.Module):
         super(Up, self).__init__()
         self.merge_mode = merge_mode
         self.skip_connections = skip_connections
+        self.up_mode = up_mode
         self.upconv = UpConv(in_channels, out_channels, dim, mode=up_mode)
         if self.merge_mode == "concat":
             self.doubleconv = DoubleConv(in_channels, out_channels, dim, batchnorm=batchnorm)
         else:
             self.doubleconv = DoubleConv(out_channels, out_channels, dim, batchnorm=batchnorm)
 
-    def forward(self, x_down, x_up):
-        x_down = self.upconv(x_down)
+    def forward(self, x_down, x_up, x_mask):
+        if self.up_mode == "max_unpool":
+            x_down = self.upconv(x_down, x_mask)
+        else:
+            x_down = self.upconv(x_down)
         if self.merge_mode == "concat":
             x = torch.cat((x_up, x_down), dim=1)
         elif self.merge_mode == "add":

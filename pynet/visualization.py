@@ -53,6 +53,11 @@ class Visualizer:
                                 'ylabel': metric},
                           win=id)
 
+
+    def t_SNE(self, features, labels):
+
+        self.vis.embeddings(features, labels)
+
     def display_images(self, images, labels, ncols=1):
         """
         :param images: numpy array with shape NxCxHxW(xD) (N=nb of images, C=nb of channels H=height, W=width, D=depth)

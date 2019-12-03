@@ -81,7 +81,7 @@ class DataManager:
             train_index, test_index = next(splitter.split(np.ones(len(projected_index)), self.labels[projected_index]))
         else:
             splitter = ShuffleSplit(n_splits=1, random_state=0, test_size=test_size)
-            train_index, test_index = next(splitter.split(np.ones(len(projected_index)), self.outputs[projected_index]))
+            train_index, test_index = next(splitter.split(np.ones(len(projected_index))))
 
         self.dataset = {
             'test': MMAPDataset(self.inputs, self.outputs,
@@ -125,7 +125,7 @@ class DataManager:
         if test:
             return DataLoader(self.dataset["test"],
                               batch_size=self.batch_size,
-                              collate_fn=DataManager.collate_fn,
+                              collate_fn=self.collate_fn,
                               **self.data_loader_kwargs)
         elif train:
             if num_fold is None:

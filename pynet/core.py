@@ -38,9 +38,10 @@ class Base(Observable):
     """ Base class to perform the optimization based on a model and an optimizer.
         The objective function (i.e loss) can be given or retrieved directly from
         torch.nn.{loss_name}
-    """    
+    """
     def __init__(self, batch_size="auto", optimizer_name="Adam",
-                 learning_rate=1e-3, loss_name="NLLLoss", metrics=None,
+                 learning_rate=1e-3,  step_size_scheduler=30,
+                 gamma_scheduler=0.1, loss_name="NLLLoss", metrics=None,
                  use_cuda=False, pretrained_path=None, **kwargs):
         """ Class instantiation. It sets the model, the optimizer and the objective function
             that will be used by the fit(), train() and test() functions. We assume that the weights
@@ -103,8 +104,8 @@ class Base(Observable):
                 lr=learning_rate,
                 **kwargs)
 
-        # Decrease the learning rate by 50% ever 2 epochs
-        self.scheduler = StepLR(self.optimizer, step_size=2, gamma=0.5)
+        # Decrease the learning rate by 100*gamma % every <step_size> epochs
+        self.scheduler = StepLR(self.optimizer, step_size=step_size_scheduler, gamma=gamma_scheduler)
 
         # If we want to restore some (or all) of the parameters already optimized during a previous training
         if pretrained_path is not None:
@@ -128,8 +129,9 @@ class Base(Observable):
                         nb_fold=0,
                         checkpoint_dir=None,
                         nb_epochs_per_saving=None,
+                        autoencoder_mode=False,
                         use_visdom=False):
-        history = History(name="training")
+        history = History(name=("%s_training" % self.model.name))
         visualizer = None
         if use_visdom:
             try:
@@ -140,9 +142,9 @@ class Base(Observable):
 
         for epoch in range(1, nb_epochs + 1):
             if validation_loader is not None:
-                losses = self.validate(validation_loader, epoch, history, visualizer)
+                losses = self.validate(validation_loader, epoch, history, visualizer, autoencoder_mode)
                 print('Validation loss avg: %f' % np.mean(losses))
-            self.train(train_loader, epoch, history, visualizer)
+            self.train(train_loader, epoch, history, visualizer, autoencoder_mode)
             self.scheduler.step()
             history.summary() # prints the summary of the current training
 
@@ -156,7 +158,7 @@ class Base(Observable):
         return history
 
 
-    def train(self, train_loader, epoch, history, visualizer=None):
+    def train(self, train_loader, epoch, history, visualizer=None, autoencoder_mode=False):
         """ train the models according to the incoming data from the data loader. This training is only over
             one epoch so it does not care about the stopping criterion.
 
@@ -181,7 +183,10 @@ class Base(Observable):
             # Computes the output
             outputs = self.model(inputs)
             # Computes the objective function
-            loss = self.compute_loss(outputs, targets, history, epoch, i)
+            if autoencoder_mode:
+                loss = self.compute_loss(outputs, inputs, history, epoch, i)
+            else:
+                loss = self.compute_loss(outputs, targets, history, epoch, i)
             # Computes the gradient for all tensors that "requires_grad"
             loss.backward()
             # Then do the actual optimization step (SGD, or ADAM, AdaGrad...)
@@ -193,11 +198,11 @@ class Base(Observable):
                 history.summary()
                 if visualizer is not None:
                     visualizer.refresh_current_metrics()
-                    #self.visualize_data(visualizer, inputs, targets,
-                    #                    outputs)  # General method in case of special networks (GAN, AE, ...)
+                    if hasattr(self.model, "visualize_data"):
+                        self.model.visualize_data(visualizer, inputs, outputs)
         return history
 
-    def validate(self, validation_loader, epoch, history, visualizer=None):
+    def validate(self, validation_loader, epoch, history, visualizer=None, autoencoder_mode=False):
         # turns the model in test mode
         self.model.eval()
         losses = []
@@ -209,7 +214,10 @@ class Base(Observable):
                 targets = targets.to(self.device)
                 # Computes directly the output
                 outputs = self.model(inputs)
-                loss = self.compute_loss(outputs, targets)
+                if autoencoder_mode:
+                    loss = self.compute_loss(outputs, inputs)
+                else:
+                    loss = self.compute_loss(outputs, targets)
                 # Saves the loss
                 losses.append(float(loss))
         history.log((epoch, 0), validation_loss=np.mean(losses))
@@ -217,9 +225,22 @@ class Base(Observable):
             visualizer.refresh_current_metrics()
         return losses
 
+    def test(self, test_loader):
+        Y_pred = []
+        Y_true = []
+        self.model.eval()
+        with torch.no_grad():
+            for i, (inputs, targets) in enumerate(test_loader):
+                inputs = inputs.to(self.device)
+                y_pred = self.model(inputs)
+                Y_pred.append(y_pred.detach().cpu().numpy())
+                Y_true.append(targets)
+        return  np.concatenate(Y_pred), np.concatenate(Y_true)
+
 
     def compute_loss(self, outputs, targets, history=None, epoch=None, it=None):
         loss = self.loss(outputs, targets)
+
         if history is not None:
             history.log((epoch, it), **{type(self.loss).__name__: float(loss)})
 
@@ -344,6 +365,3 @@ class Base(Observable):
         """
         y_probs = self.predict_proba(X)
         return np.argmax(y_probs, axis=1)
-
-    def visualize_data(self, visualizer, *args, **kwargs):
-        pass

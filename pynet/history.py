@@ -78,7 +78,7 @@ class History(object):
         """
         return list(self.history.keys())
 
-    def __getitem__(self, metric, with_nan=True):
+    def __getitem__(self, metric, with_nan=False):
 
         steps = []
         data = []

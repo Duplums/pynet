@@ -47,10 +47,13 @@ class NCross_Entropy:
 
 class MultiTaskLoss:
 
-    def __init__(self, l_losses, weights=None, l_metrics=None):
+    def __init__(self,l_losses, weights=None, net=None, reg=None, lambda_reg=1e-3, l_metrics=None):
 
         self.losses = l_losses
         self.metrics = l_metrics
+        self.reg = reg
+        self.lambda_reg = lambda_reg
+        self.net = net
         self.weights = weights or [1 for _ in l_losses]
         self.last_computed_losses = [0 for _ in l_losses]
 
@@ -60,6 +63,12 @@ class MultiTaskLoss:
             loss_ = loss(inputs[:, i], targets[:, i])
             self.last_computed_losses[i] = float(loss_)
             out += self.weights[i] * loss_
+        if self.reg == "l2":
+            l2_reg = 0
+            for param in self.net.get_reg_params():
+                l2_reg += torch.norm(param)
+            out += self.lambda_reg * l2_reg
+
         return out
 
     def log_errors(self, history, epoch, it):
@@ -69,6 +78,22 @@ class MultiTaskLoss:
     def log_metrics(self, inputs, targets, history, epoch, it):
         for i, metric in enumerate(self.metrics):
             history.log((epoch, it), **{"%s component %i" % (type(metric).__name__, i): metric(inputs, targets)})
+
+
+class L12Loss:
+
+    def __init__(self, reduction='mean', alpha=1, beta=0.5):
+        self.l1_loss = nn.L1Loss(reduction=reduction)
+        self.l2_loss = nn.MSELoss(reduction=reduction)
+        self.alpha = alpha
+        self.beta = beta
+
+
+    def __call__(self, inputs, targets):
+
+        return self.alpha * self.l1_loss(inputs, targets) + self.beta * self.l2_loss(inputs, targets)
+
+
 
 
 def accuracy(y_pred, y):
