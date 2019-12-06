@@ -7,6 +7,10 @@
 # for details.
 ##########################################################################
 
+"""
+The U-Net is a convolutional encoder-decoder neural network.
+"""
+
 # Imports
 import ast
 import collections
@@ -15,7 +19,6 @@ import torch.nn as nn
 import numpy as np
 import torch.nn.functional as func
 from pynet.utils import tensor2im
-
 
 class UNet(nn.Module):
     """ UNet.
@@ -26,17 +29,18 @@ class UNet(nn.Module):
     information representing the localization of details
     (from the encoding, compressive pathway).
     Modifications to the original paper:
-    (1) padding is used in 3x3x3 convolutions to prevent loss
-        of border pixels
-    (2) merging outputs does not require cropping due to (1)
-    (3) residual connections can be used by specifying
-        UNet(merge_mode='add')
-    (4) if non-parametric upsampling is used in the decoder
-        pathway (specified by upmode='upsample'), then an
-        additional 1x1x1 3d convolution occurs after upsampling
-        to reduce channel dimensionality by a factor of 2.
-        This channel halving happens with the convolution in
-        the tranpose convolution (specified by upmode='transpose')
+
+    - padding is used in 3x3x3 convolutions to prevent loss
+      of border pixels
+    - merging outputs does not require cropping due to (1)
+    - residual connections can be used by specifying
+      UNet(merge_mode='add')
+    - if non-parametric upsampling is used in the decoder
+      pathway (specified by upmode='upsample'), then an
+      additional 1x1x1 3d convolution occurs after upsampling
+      to reduce channel dimensionality by a factor of 2.
+      This channel halving happens with the convolution in
+      the tranpose convolution (specified by upmode='transpose')
     """
 
     def __init__(self, num_classes, in_channels=1, depth=5, 
@@ -296,7 +300,7 @@ def UpConv(in_channels, out_channels, dim, mode="transpose"):
 def Conv1x1x1(in_channels, out_channels, dim, groups=1):
     return eval(
         "nn.Conv{0}(in_channels, out_channels, kernel_size=1, groups=groups, "
-        "stride=1)".format(dim)) 
+        "stride=1)".format(dim))
 
 
 class Down(nn.Module):
@@ -376,5 +380,3 @@ class Up(nn.Module):
         if self.skip_connections:
             x = x + x_down
         return x
-
-

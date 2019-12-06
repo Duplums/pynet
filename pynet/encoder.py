@@ -22,22 +22,15 @@ from pynet.core import Base
 from pynet.utils import tensor2im
 
 
-class Encoder(Base):
 
-
-    def __init__(self, *args, model=None, **kwargs):
-        if model is not None:
-            self.model = model
-        super().__init__(*args, **kwargs)
-
-class UNetEncoder(Encoder):
+class UNetEncoder(Base):
     """ UNet (2014) by Long and Shelhamer.
     """
     def __init__(self, num_classes, in_channels=1, depth=5, start_filts=64,
                  up_mode="transpose", merge_mode="concat", batchnorm=False,
-                 dim="3d", pretrained_path=None, batch_size="auto",
-                 optimizer_name="Adam", learning_rate=1e-3,
-                 loss_name="NLLLoss", metrics=None, use_cuda=False, **kwargs):
+                 dim="3d", pretrained=None, optimizer_name="Adam",
+                 learning_rate=1e-3, loss_name="NLLLoss", metrics=None,
+                 use_cuda=False, **kwargs):
         """ Class initilization.
 
         Parameters
@@ -59,9 +52,8 @@ class UNetEncoder(Encoder):
             normalize the inputs of the activation function.
         dim: str, default '3d'
             '3d' or '2d' input data.
-        pretrained_path: the path to a previous checkpoint saved to restore
-        batch_size: int, default 'auto'
-            the mini-batches size.
+        pretrained: path, default None
+            path to the pretrained model or weights.
         optimizer_name: str, default 'Adam'
             the name of the optimizer: see 'torch.optim' for a description
             of available optimizer.
@@ -87,18 +79,11 @@ class UNetEncoder(Encoder):
             merge_mode=merge_mode,
             batchnorm=batchnorm,
             dim=dim)
-
         super().__init__(
-            batch_size=batch_size,
             optimizer_name=optimizer_name,
             learning_rate=learning_rate,
             loss_name=loss_name,
             metrics=metrics,
             use_cuda=use_cuda,
-            pretrained_path=pretrained_path,
+            pretrained=pretrained,
             **kwargs)
-
-
-
-
-
