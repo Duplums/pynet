@@ -32,10 +32,10 @@ class DataManager(object):
     """
 
     def __init__(self, input_path, metadata_path, output_path=None,
-                 labels=None, stratify_label=None, projection_labels=None,
-                 number_of_folds=10, batch_size=1, input_transforms=None,
-                 output_transforms=None, add_input=False, test_size=0.1,
-                 **dataloader_kwargs):
+                 labels=None, stratify_label=None, custom_stratification=None,
+                 projection_labels=None, number_of_folds=10, batch_size=1,
+                 input_transforms=None, output_transforms=None, add_input=False,
+                 test_size=0.1, **dataloader_kwargs):
         """ Splits an input numpy array using memory-mapping into three sets:
         test, train and validation. This function can stratify the data.
 
@@ -58,6 +58,9 @@ class DataManager(object):
         stratify_label: str, default None
             the name of the column in the metadata table containing the label
             used during the stratification.
+        custom_stratification: dict, default None
+            same format as projection labels. It will split the dataset into train/test/val according
+            to the stratification defined in the dict.
         projection_labels: dict, default None
             selects only the data that match the conditions in the dict
             {<column_name>: <value>}.
@@ -97,45 +100,62 @@ class DataManager(object):
 
         # 1st step: split into train/test (get only indices)
         indices = np.ones(len(projected_index))
-        if stratify_label is not None:
+        if custom_stratification is not None:
+            train_index, val_index, test_index = (DataManager.get_projected_index(df, custom_stratification["train"]),
+                                                  DataManager.get_projected_index(df, custom_stratification["validation"]),
+                                                  DataManager.get_projected_index(df, custom_stratification["test"]))
+            train_index &= projected_index
+            val_index &= projected_index
+            test_index &= projected_index
+
+        elif stratify_label is not None:
             splitter = StratifiedShuffleSplit(
                 n_splits=1, random_state=0, test_size=test_size)
             train_index, test_index = next(
                 splitter.split(indices,
                                self.stratify_label[projected_index]))
+            train_index = projected_index[train_index]
+            test_index = projected_index[test_index]
         else:
             if test_size == 1:
-                train_index, test_index = (None, range(len(projected_index)))
+                train_index, test_index = (None, projected_index)
             else:
                 splitter = ShuffleSplit(
                     n_splits=1, random_state=0, test_size=test_size)
                 train_index, test_index = next(
                     splitter.split(np.ones(len(projected_index))))
+                train_index = projected_index[train_index]
+                test_index = projected_index[test_index]
+
         self.dataset["test"] = ArrayDataset(
-            self.inputs, projected_index[test_index], labels=self.labels,
+            self.inputs, test_index, labels=self.labels,
             outputs=self.outputs, add_input=self.add_input)
         if train_index is None:
             return
 
         # 2nd step: split the training set into K folds (K-1 for training, 1
         # for validation, K times)
-        if stratify_label is not None:
+        if custom_stratification is not None:
+            gen = [(train_index, val_index)]
+        elif stratify_label is not None:
             kfold_splitter = StratifiedKFold(
                 n_splits=number_of_folds, shuffle=True, random_state=0)
             gen = kfold_splitter.split(
                 np.ones(len(train_index)),
-                self.stratify_label[projected_index][train_index])
+                self.stratify_label[train_index])
+            gen = [(train_index[tr], train_index[val]) for (tr, val) in gen]
         else:
             kfold_splitter = KFold(
                 n_splits=number_of_folds, shuffle=True, random_state=0)
             gen = kfold_splitter.split(np.ones(len(train_index)))
+            gen = [(train_index[tr], train_index[val]) for (tr, val) in gen]
         for fold_train_index, fold_val_index in gen:
             train_dataset = ArrayDataset(
-                self.inputs, projected_index[train_index[fold_train_index]],
+                self.inputs, fold_train_index,
                 labels=self.labels, outputs=self.outputs,
                 add_input=self.add_input)
             val_dataset = ArrayDataset(
-                self.inputs, projected_index[train_index[fold_val_index]],
+                self.inputs, fold_val_index,
                 labels=self.labels, outputs=self.outputs,
                 add_input=self.add_input)
             self.dataset["train"].append(train_dataset)
@@ -245,8 +265,12 @@ class DataManager(object):
             return df.index
         projected_index = df.index
         for (col, val) in projection_labels.items():
-            projected_index = projected_index.intersection(
-                df[df[col] == val].index)
+            if isinstance(val, list):
+                projected_index = projected_index.intersection(
+                    df[getattr(df, col).isin(val)].index)
+            elif val is not None:
+                projected_index = projected_index.intersection(
+                    df[df[col] == val].index)
         return projected_index
 
 

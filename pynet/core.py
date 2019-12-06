@@ -65,7 +65,7 @@ class Base(Observable):
             be used to set specific optimizer parameters.
         """
         super().__init__(
-            signals=["before_epoch", "after_epoch"])
+            signals=["before_epoch", "after_epoch", "after_iteration"])
         self.optimizer = kwargs.get("optimizer")
         self.loss = kwargs.get("loss")
         for name in ("optimizer", "loss"):
@@ -110,7 +110,8 @@ class Base(Observable):
         self.model = self.model.to(self.device)
 
     def training(self, manager, nb_epochs, checkpointdir=None, fold_index=None,
-                 scheduler=None, with_validation=True):
+                 scheduler=None, with_validation=True, with_visualization=False,
+                 nb_epochs_per_saving=1):
         """ Train the model.
 
         Parameters
@@ -129,7 +130,11 @@ class Base(Observable):
             a scheduler used to reduce the learning rate.
         with_validation: bool, default True
             if set use the validation dataset.
-
+        with_visualization: bool, default False,
+            whether it uses a visualizer that will plot the losses/metrics/images in a WebApp framework
+            during the training process
+        nb_epochs_per_saving: int, default 1,
+            the number of epochs after which the model+optimizer's parameters are saved
         Returns
         -------
         train_history, valid_history: History
@@ -140,15 +145,12 @@ class Base(Observable):
             valid_history = History(name="validation")
         else:
             valid_history = None
+        if with_visualization:
+            train_visualizer = Visualizer(train_history)
+            if with_validation:
+                valid_visualizer = Visualizer(valid_history)
         print(self.loss)
         print(self.optimizer)
-        visualizer = None
-        if use_visdom:
-            try:
-                visualizer = Visualizer(history)
-            except Exception as e:
-                print("Error while initializing the visualizer: {}".format(e))
-                visualizer = None
         folds = range(manager.number_of_folds)
         if fold_index is not None:
             folds = [fold_index]
@@ -160,12 +162,11 @@ class Base(Observable):
                 fold_index=fold)
             for epoch in range(nb_epochs):
                 self.notify_observers("before_epoch", epoch=epoch, fold=fold)
-                loss, values = self.train(loaders.train)
+                loss, values = self.train(loaders.train, train_history, train_visualizer, fold, epoch)
+                train_history.summary()
                 if scheduler is not None:
                     scheduler.step(loss)
-                train_history.log((fold, epoch), loss=loss, **values)
-                train_history.summary()
-                if checkpointdir is not None:
+                if checkpointdir is not None and epoch % nb_epochs_per_saving == 0:
                     checkpoint(
                         model=self.model,
                         epoch=epoch,
@@ -180,7 +181,9 @@ class Base(Observable):
                     _, loss, values = self.test(loaders.validation)
                     valid_history.log((fold, epoch), loss=loss, **values)
                     valid_history.summary()
-                    if checkpointdir is not None:
+                    if valid_visualizer is not None:
+                        valid_visualizer.refresh_current_metrics()
+                    if checkpointdir is not None and epoch % nb_epochs_per_saving == 0:
                         valid_history.save(
                             outdir=checkpointdir,
                             epoch=epoch,
@@ -188,7 +191,7 @@ class Base(Observable):
                 self.notify_observers("after_epoch", epoch=epoch, fold=fold)
         return train_history, valid_history
 
-    def train(self, loader):
+    def train(self, loader, history=None, visualizer=None, fold=None, epoch=None):
         """ Train the model on the trained data.
 
         Parameters
@@ -227,6 +230,14 @@ class Base(Observable):
                 if name not in values:
                     values[name] = 0
                 values[name] += metric(outputs, targets) / nb_batch
+            if history is not None:
+                if hasattr(self.loss, 'log_errors'):
+                    self.loss.log_errors(history, fold, epoch, iteration)
+                history.log((fold, epoch, iteration), loss=loss, **values)
+            if iteration % 5 == 0:
+                history.summary()
+                if visualizer is not None:
+                    visualizer.refresh_current_metrics()
         pbar.close()
         return loss, values
 
@@ -315,7 +326,7 @@ class Base(Observable):
                         targets.append(item.to(self.device))
                 if len(targets) == 1:
                     targets = targets[0]
-                elif len(targers) == 0:
+                elif len(targets) == 0:
                     targets = None
                 outputs = self.model(inputs)
                 if isinstance(outputs, tuple):

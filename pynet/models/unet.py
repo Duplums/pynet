@@ -70,7 +70,8 @@ class UNet(nn.Module):
         batchnorm: bool, default False
             normalize the inputs of the activation function.
         mode: 'str', default 'seg'
-            Whether the network is turned in 'segmentation' mode ("seg") or 'classification' mode ("classif")
+            Whether the network is turned in 'segmentation' mode ("seg") or 'classification' mode ("classif") or both
+            ("seg_classif")
             The input_size is required for classification
         input_size: tuple (optional) it is required for classification only. It should be a tuple (C, H, W, D) (for 3d)
                     or (C, H, W) (for 2d)
@@ -87,7 +88,7 @@ class UNet(nn.Module):
             raise ValueError(
                 "'{}' is not a valid mode for merging up and down paths. Only "
                 "'3d' and '2d' are allowed.".format(dim))
-        if mode in ("seg", "classif"):
+        if mode in ("seg", "classif", "seg_classif"):
             self.mode = mode
         else:
             raise ValueError("'{}' is not a valid mode. Should be in 'seg' "
@@ -145,7 +146,7 @@ class UNet(nn.Module):
                      pooling=down_sampling, batchnorm=batchnorm,
                      skip_connections=skip_connections))
 
-        if self.mode == "seg":
+        if self.mode == "seg" or self.mode == "seg_classif":
             # Create the decoder pathway
             # - careful! decoding only requires depth-1 blocks
             for cnt in range(depth - 1):
@@ -156,7 +157,7 @@ class UNet(nn.Module):
                        merge_mode=merge_mode, batchnorm=batchnorm,
                        skip_connections=skip_connections))
 
-        else:
+        if self.mode == "classif" or self.mode == "seg_classif":
             final_dims = np.array(self.input_size[1:]) // 2 ** (self.depth - 1)
             final_dims=np.insert(final_dims, 0, self.start_filts * 2**(self.depth-1)) # insert the channels
 
@@ -167,7 +168,7 @@ class UNet(nn.Module):
         self.up = nn.ModuleList(self.up)
 
         # Get ouptut segmentation
-        if self.mode == "seg":
+        if self.mode == "seg" or self.mode == "seg_classif":
             self.conv_final = Conv1x1x1(out_channels, self.num_classes, self.dim)
 
         # Kernel initializer
@@ -197,8 +198,8 @@ class UNet(nn.Module):
                 x = module(x)
                 encoder_masks.append(None)
             encoder_outs.append(x)
-
-        if self.mode == "seg":
+        x_enc = x
+        if self.mode == "seg" or self.mode == "seg_classif":
             encoder_outs = encoder_outs[:-1][::-1]
             encoder_masks = encoder_masks[::-1]
             for cnt, module in enumerate(self.up):
@@ -208,11 +209,17 @@ class UNet(nn.Module):
             # No softmax is used. This means you need to use
             # nn.CrossEntropyLoss in your training script,
             # as this module includes a softmax already.
-            x = self.conv_final(x)
-        else:
+            x_seg = self.conv_final(x)
+        if self.mode == "classif" or self.mode == "seg_classif":
             # No softmax used
-            x = self.classifier(x)
-        return x
+            x_classif = self.classifier(x_enc)
+
+        if self.mode == "seg":
+            return x_seg
+        if self.mode == "classif":
+            return x_classif
+
+        return x_seg + x_classif
 
     def visualize_data(self, visualizer, inputs, outputs):
         assert inputs.shape == outputs.shape
@@ -232,20 +239,18 @@ class Classifier(nn.Module):
         self.input_size = input_size
         self.num_classes = num_classes
         self.dim = dim
-        # Assuming input 8x9x8 (x256 filters) then we could use a 1x2x1 kernels for each input (x256)
-        # Then we use  2x256=512  kernels of size (8, 9, 8) to extract the relevant info.
-        self.conv = eval(
-            "nn.Conv{dim}({in_channels}, {out_channels}, {kernel_size})".format(dim=self.dim,
-                                                                               in_channels=self.input_size[0],
-                                                                               out_channels=512,
-                                                                               kernel_size=tuple(self.input_size[1:])))
+        self.maxpooling = nn.AdaptiveMaxPool3d(1)
+        self.fc1 = nn.Linear(input_size[0], 64)
         self.relu = nn.ReLU(True)
-        self.fc = nn.Linear(512, self.num_classes)
+        self.dropout = nn.Dropout(0.5)
+        self.fc2 = nn.Linear(64, self.num_classes)
 
     def forward(self, x):
-        x = self.conv(x)
-        x = x.view(x.size(0), -1)
-        x = self.fc(x) # do not forget to keep the batch nb
+        x = self.maxpooling(x)
+        x = self.fc1(x)
+        x = self.relu(x)
+        x = self.dropout(x)
+        x = self.fc2(x)
         return x
 
 

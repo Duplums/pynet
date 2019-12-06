@@ -55,6 +55,7 @@ class History(object):
             table.append([step] + values)
         return tabulate(table, headers=self.metrics)
 
+
     def log(self, step, **kwargs):
         """ Record some metrics at a specific step.
 
