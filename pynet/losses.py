@@ -78,6 +78,11 @@ class MultiTaskLoss:
     #     for i, metric in enumerate(self.metrics):
     #         history.log((epoch, it), **{"%s component %i" % (type(metric).__name__, i): metric(inputs, targets)})
 
+class RMSELoss:
+
+    def __call__(self, inputs, targets):
+        return torch.sqrt(torch.mean((inputs - targets)**2))
+
 
 class L12Loss:
 

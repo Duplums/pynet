@@ -107,7 +107,7 @@ class DataManager(object):
             train_index &= projected_index
             val_index &= projected_index
             test_index &= projected_index
-
+            self.number_of_folds = 1
         elif stratify_label is not None:
             splitter = StratifiedShuffleSplit(
                 n_splits=1, random_state=0, test_size=test_size)
@@ -205,7 +205,7 @@ class DataManager(object):
             else:
                 data[key] = torch.stack(data[key], dim=0).float()
         if data["labels"] is not None:
-            data["labels"] = data["labels"].type(torch.LongTensor)
+            data["labels"] = data["labels"].type(torch.FloatTensor)
         return DataItem(**data)
 
     def get_dataloader(self, train=False, validation=False, test=False,

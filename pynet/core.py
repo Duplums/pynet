@@ -68,6 +68,7 @@ class Base(Observable):
             signals=["before_epoch", "after_epoch", "after_iteration"])
         self.optimizer = kwargs.get("optimizer")
         self.loss = kwargs.get("loss")
+        self.device = torch.device("cuda" if use_cuda else "cpu")
         for name in ("optimizer", "loss"):
             if name in kwargs:
                 kwargs.pop(name)
@@ -101,12 +102,15 @@ class Base(Observable):
                 self.model.load_state_dict(checkpoint.state_dict())
             elif isinstance(checkpoint, dict):
                 if "model" in checkpoint:
-                    self.model.load_state_dict(checkpoint["model"])
-                if "optimizer" in checkpoint:
-                    self.optimizer.load_state_dict(checkpoint["optimizer"])
+                    self.model.load_state_dict(checkpoint["model"], strict=False)
+                # if "optimizer" in checkpoint:
+                #     self.optimizer.load_state_dict(checkpoint["optimizer"])
+                #     for state in self.optimizer.state.values():
+                #         for k, v in state.items():
+                #             if torch.is_tensor(v):
+                #                 state[k] = v.to(self.device)
             else:
                 self.model.load_state_dict(checkpoint)
-        self.device = torch.device("cuda" if use_cuda else "cpu")
         self.model = self.model.to(self.device)
 
     def training(self, manager, nb_epochs, checkpointdir=None, fold_index=None,
@@ -148,7 +152,7 @@ class Base(Observable):
         if with_visualization:
             train_visualizer = Visualizer(train_history)
             if with_validation:
-                valid_visualizer = Visualizer(valid_history)
+                valid_visualizer = Visualizer(valid_history, offset_win=10)
         print(self.loss)
         print(self.optimizer)
         folds = range(manager.number_of_folds)
@@ -209,8 +213,8 @@ class Base(Observable):
         self.model.train()
         nb_batch = len(loader)
         values = {}
-        loss = 0
         pbar = tqdm(total=nb_batch, desc="Mini-Batch")
+        losses = []
         for iteration, dataitem in enumerate(loader):
             pbar.update()
             inputs = dataitem.inputs.to(self.device)
@@ -224,24 +228,26 @@ class Base(Observable):
             outputs = self.model(inputs)
             batch_loss = self.loss(outputs, targets)
             batch_loss.backward()
+            losses.append(float(batch_loss))
             self.optimizer.step()
-            loss += batch_loss.item() / nb_batch
             for name, metric in self.metrics.items():
                 if name not in values:
                     values[name] = 0
-                values[name] += metric(outputs, targets) / nb_batch
+                values[name] = float(metric(outputs, targets))
             if history is not None:
                 if hasattr(self.loss, 'log_errors'):
                     self.loss.log_errors(history, fold, epoch, iteration)
-                history.log((fold, epoch, iteration), loss=loss, **values)
+                history.log((fold, epoch, iteration), loss=losses[-1], **values)
             if iteration % 5 == 0:
-                history.summary()
                 if visualizer is not None:
                     visualizer.refresh_current_metrics()
+                    if hasattr(self.model, "get_current_visuals"):
+                        visuals = self.model.get_current_visuals()
+                        visualizer.display_images(visuals)
         pbar.close()
-        return loss, values
+        return np.mean(losses), values
 
-    def testing(self, manager, with_logit=False, predict=False):
+    def testing(self, manager, with_logit=False, predict=False, with_visuals=False):
         """ Evaluate the model.
 
         Parameters
@@ -252,6 +258,8 @@ class Base(Observable):
             apply a softmax to the result.
         predict: bool, default False
             take the argmax over the channels.
+        with_visuals: bool, default False
+            returns the visuals got from the model
 
         Returns
         -------
@@ -267,8 +275,12 @@ class Base(Observable):
             the values of the metrics if true data availble.
         """
         loaders = manager.get_dataloader(test=True)
-        y, loss, values = self.test(
-            loaders.test, with_logit=with_logit, predict=predict)
+        if with_visuals:
+            y, loss, values, visuals = self.test(
+                loaders.test, with_logit=with_logit, predict=predict, with_visuals=with_visuals)
+        else:
+            y, loss, values = self.test(
+                loaders.test, with_logit=with_logit, predict=predict, with_visuals=with_visuals)
         if loss == 0:
             loss, values, y_true = (None, None, None)
         else:
@@ -287,9 +299,11 @@ class Base(Observable):
                 y_true.append(np.concatenate(values, axis=0))
             if len(y_true) == 1:
                 y_true = y_true[0]
+        if with_visuals:
+            return y, X, y_true, loss, values, visuals
         return y, X, y_true, loss, values
 
-    def test(self, loader, with_logit=False, predict=False):
+    def test(self, loader, with_logit=False, predict=False, with_visuals=False):
         """ Evaluate the model on the test or validation data.
 
         Parameter
@@ -314,6 +328,7 @@ class Base(Observable):
         nb_batch = len(loader)
         loss = 0
         values = {}
+        visuals = []
         with torch.no_grad():
             y = []
             pbar = tqdm(total=nb_batch, desc="Mini-Batch")
@@ -329,6 +344,8 @@ class Base(Observable):
                 elif len(targets) == 0:
                     targets = None
                 outputs = self.model(inputs)
+                if with_visuals:
+                    visuals.append(self.model.get_current_visuals())
                 if isinstance(outputs, tuple):
                     y.append(outputs[0])
                 else:
@@ -341,10 +358,14 @@ class Base(Observable):
                             values[name] = 0
                         values[name] += metric(outputs, targets) / nb_batch
             pbar.close()
+            if len(visuals) > 0:
+                visuals = np.concatenate(visuals, axis=0)
             y = torch.cat(y, 0)
             if with_logit:
                 y = func.softmax(y, dim=1)
             y = y.cpu().detach().numpy()
             if predict:
                 y = np.argmax(y, axis=1)
+        if with_visuals:
+            return y, loss, values, visuals
         return y, loss, values

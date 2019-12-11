@@ -15,7 +15,64 @@ Common functions to display images.
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+from skimage.transform import resize
 import torchvision
+import random
+
+def display_attention_maps(images, attention_maps, slicing_mode="middle_slicing", nb_samples=5):
+    # images: numpy array of shape (samples, channels, dim)
+    # attention_maps: numpy array of shape (samples, channels, dim)
+    nb_samples = min(nb_samples, len(images))
+    (N, C, H, W, D) = images.shape
+
+    if slicing_mode == "middle_slicing":
+        slices = [(H // 2, 0), (W // 2, 1), (D // 2, 2)]
+
+    elif slicing_mode == "quart_slicing":
+        slices = [(H // 4, 0), (H // 2, 0), (3*H // 4, 0)]
+    else:
+        raise NotImplementedError("Not yet implemented !")
+
+    n_rows, n_cols = len(slices) * C, nb_samples
+    fig = plt.figure(figsize=(15, 7), dpi=200)
+    fig.clf()
+    for i, n in enumerate(random.sample(range(N), nb_samples)):
+        for j in range(C):
+            for k, (indice, axis) in enumerate(slices):
+                im = images[i, j]
+                a_map = resize(attention_maps[i, j], (H, W, D))
+
+                im = np.take(im, indice, axis=axis)
+                attention_im = np.take(a_map, indice, axis=axis)
+
+                plt.subplot(n_rows, n_cols, k * C * nb_samples + j * nb_samples + i + 1)
+                plt.imshow(im, interpolation='bilinear', cmap='gray')
+                plt.imshow(attention_im, interpolation='bilinear', cmap=cm.jet, alpha=0.2)
+                plt.axis('off')
+                plt.colorbar()
+    plt.subplots_adjust(wspace=0, hspace=0)
+    plt.show()
+
+def linear_reg_plots(Y_pred, Y_true):
+    from sklearn.linear_model import LinearRegression
+    from scipy.stats import pearsonr
+
+    reg = LinearRegression().fit(Y_pred, Y_true)
+    coefs, intercepts = reg.coef_, reg.intercept_
+    (r, pval) = pearsonr(Y_pred.flatten(), Y_true.flatten())
+    MAE = np.mean(np.abs(Y_pred - Y_true))
+    RMSE = np.sqrt(np.mean(np.abs(Y_pred-Y_true)**2))
+
+    plt.scatter(Y_pred, Y_true)
+    plt.plot(Y_pred, Y_pred, color='red', label='Perfect case')
+    plt.plot(Y_pred, [coefs[0]*y[0]+intercepts[0] for y in Y_pred], color='green', label='Linear Regression')
+    plt.legend()
+    plt.xlabel('Predicted age')
+    plt.ylabel('True age')
+    plt.title('Linear regression: $R^2={R2:.2f}$, $r={r:.2f}$ (p-value {pval:.2f} for H0=correlate),\n'
+              'MAE={mae:.2f}, RMSE={rmse:.2f}'.format(R2=reg.score(Y_pred, Y_true), r=r, pval=pval, mae=MAE, rmse=RMSE))
+    plt.show()
 
 
 def plot_data(data, slice_axis=2, nb_samples=5, channel=0, labels=None,

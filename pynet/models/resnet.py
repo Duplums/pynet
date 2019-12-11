@@ -1,4 +1,6 @@
 from torchvision.models.utils import load_state_dict_from_url
+from pynet.models.layers.grid_attention_layer import GridAttentionBlock3D
+from pynet.utils import tensor2im
 import torch
 import torch.nn as nn
 
@@ -114,7 +116,7 @@ class ResNet(nn.Module):
 
     def __init__(self, block, layers, in_channels=3, num_classes=1000, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None,
-                 norm_layer=None, with_dropout=False):
+                 norm_layer=None, with_dropout=False, with_grid_attention=False):
         super(ResNet, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm3d
@@ -123,6 +125,8 @@ class ResNet(nn.Module):
         self.name = "resnet"
         self.inplanes = 64
         self.dilation = 1
+        self.with_grid_attention = with_grid_attention
+
         if replace_stride_with_dilation is None:
             # each element in the tuple indicates if we should replace
             # the 2x2 stride with a dilated convolution instead
@@ -147,13 +151,26 @@ class ResNet(nn.Module):
         self.avgpool = nn.AdaptiveAvgPool3d(1)
         if with_dropout:
             self.dropout = nn.Dropout(0.2)
-        self.fc = nn.Linear(512 * block.expansion, num_classes)
+
+        # attention mechanism
+        self.attention_map = None
+        if self.with_grid_attention:
+            attention_block = GridAttentionBlock3D
+            self.compatibility_score = attention_block(in_channels=128, gating_channels=512,
+                                                       inter_channels=512, sub_sample_factor=(1, 1, 1))
+
+            self.fc_ga = nn.Linear(512 * block.expansion + 128, num_classes)
+        else:
+            self.fc = nn.Linear(512 * block.expansion, num_classes)
 
         for m in self.modules():
             if isinstance(m, nn.Conv3d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
             elif isinstance(m, (nn.BatchNorm3d, nn.GroupNorm)):
                 nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
                 nn.init.constant_(m.bias, 0)
 
         # Zero-initialize the last BN in each residual branch,
@@ -165,6 +182,9 @@ class ResNet(nn.Module):
                     nn.init.constant_(m.bn3.weight, 0)
                 elif isinstance(m, BasicBlock):
                     nn.init.constant_(m.bn2.weight, 0)
+
+    def get_current_visuals(self):
+        return tensor2im(self.attention_map)
 
     def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
         norm_layer = self._norm_layer
@@ -197,15 +217,22 @@ class ResNet(nn.Module):
         x = self.maxpool(x)
 
         x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
+        x2 = self.layer2(x)
+        x = self.layer3(x2)
         x = self.layer4(x)
 
-        x = self.avgpool(x)
-        x = torch.flatten(x, 1)
+        x5 = self.avgpool(x)
+        x = torch.flatten(x5, 1)
         if hasattr(self, 'dropout'):
             x  = self.dropout(x)
-        x = self.fc(x)
+        if self.with_grid_attention:
+            conv_scored, self.attention_map = self.compatibility_score(x2, x5)
+            pool_attention = self.avgpool(conv_scored)
+            pool_attention = torch.flatten(pool_attention, 1)
+            x = torch.cat((pool_attention, x), dim=1)
+            x = self.fc_ga(x).squeeze(dim=1)
+        else:
+            x = self.fc(x).squeeze(dim=1)
 
         return x
 
