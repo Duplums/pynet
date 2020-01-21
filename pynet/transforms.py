@@ -15,22 +15,33 @@ is loaded.
 # Imports
 import collections
 import numpy as np
+from scipy.ndimage import rotate
 
-class Normalize:
+
+class LabelMapping(object):
+
+    def __init__(self, **mappings):
+        self.mappings = mappings
+
+    def __call__(self, label):
+        return self.mappings[label]
+
+
+class Normalize(object):
     def __init__(self, mean=0.0, std=1.0, eps=1e-8):
         self.mean=mean
         self.std=std
         self.eps=eps
 
     def __call__(self, arr):
-        assert type(arr) == np.ndarray
         return self.std * (arr - np.mean(arr))/(np.std(arr) + self.eps) + self.mean
 
-
-class CenterCrop(object):
-
-    def __init__(self, shape):
+class Crop(object):
+    """Crop the given n-dimensional array either at a random location or centered"""
+    def __init__(self, shape, type="center"):
+        assert type in ["center", "random"]
         self.shape = shape
+        self.copping_type = type
 
     def __call__(self, arr):
         assert type(arr) == np.ndarray
@@ -45,11 +56,40 @@ class CenterCrop(object):
         for ndim in range(len(img_shape)):
             if size[ndim] > img_shape[ndim] or size[ndim] < 0:
                 size[ndim] = img_shape[ndim]
-            delta_before = int((img_shape[ndim] - size[ndim]) / 2.0)
-            indexes.append('%i:%i' % (delta_before, delta_before + size[ndim]))
+            if self.copping_type == "center":
+                delta_before = int((img_shape[ndim] - size[ndim]) / 2.0)
+            elif self.copping_type == "random":
+                delta_before = np.random.randint(0, img_shape[ndim] - size[ndim] + 1)
+            indexes.append(slice(delta_before, delta_before + size[ndim]))
 
-        return eval('arr[%s]' % ','.join(indexes))
+        return arr[tuple(indexes)]
 
+class Rotation(object):
+    def __init__(self, angle, axes=(1,2), reshape=True, **kwargs):
+        self.angle = angle
+        self.axes = axes
+        self.reshape = reshape
+        self.rotate_kwargs = kwargs
+
+    def __call__(self, arr):
+        return rotate(arr, self.angle, axes=self.axes, reshape=self.reshape, **self.rotate_kwargs)
+
+class RandomRotation(object):
+    """ nd generalisation of https://pytorch.org/docs/stable/torchvision/transforms.html section RandomRotation"""
+    def __init__(self, angles, axes=(1,2), reshape=True, **kwargs):
+        if type(angles) in [int, float]:
+            self.angles = [-angles, angles]
+        elif type(angles) == list and len(angles) == 2 and angles[0] < angles[1]:
+            self.angles = angles
+        else:
+            raise ValueError("Unkown angles type: {}".format(type(angles)))
+        self.axes = axes
+        self.reshape = reshape
+        self.rotate_kwargs = kwargs
+
+    def __call__(self, arr):
+        angle = np.random.random() * (self.angles[1] - self.angles[0]) + self.angles[0]
+        return rotate(arr, angle, axes=self.axes, reshape=self.reshape, **self.rotate_kwargs)
 
 
 class Padding(object):
