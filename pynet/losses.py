@@ -14,8 +14,7 @@ import torch.nn as nn
 import torch.nn.functional as func
 from torch.autograd import Variable
 from torch.nn.modules.loss import _Loss
-
-
+import numpy as np
 
 class NCross_Entropy:
 
@@ -44,6 +43,113 @@ class NCross_Entropy:
         for i, l in enumerate(self.last_computed_losses):
             history.log((epoch, it), **{"cross_entropy_%i" % i: l})
 
+
+class SSIM(torch.nn.Module):
+    def __init__(self, window_size=11, size_average=True, dim="3d"):
+        super(SSIM, self).__init__()
+        self.window_size = window_size
+        self.size_average = size_average
+        self.channel = 1
+        self.window = SSIM.create_window(window_size, self.channel, dim)
+        self.dim = dim
+
+    @staticmethod
+    def gaussian(window_size, sigma):
+        gauss = torch.Tensor([np.exp(-(x - window_size // 2) ** 2 / float(2 * sigma ** 2)) for x in range(window_size)])
+        return gauss / gauss.sum()
+
+    @staticmethod
+    def create_window(window_size, channel, dim):
+        _1D_window = SSIM.gaussian(window_size, 1.5).unsqueeze(1)
+        _2D_window = _1D_window.mm(_1D_window.t()).float().unsqueeze(0).unsqueeze(0)
+        if dim == "2d":
+            window = Variable(_2D_window.expand(channel, 1, window_size, window_size).contiguous())
+        else:
+            _3D_window = _1D_window.mm(_2D_window.reshape(1, -1)).reshape(window_size, window_size, window_size).\
+                float().unsqueeze(0).unsqueeze(0)
+            window = Variable(_3D_window.expand(channel, 1, window_size, window_size, window_size).contiguous())
+        return window
+
+    @staticmethod
+    def _ssim(img1, img2, window, window_size, channel, size_average=True, dim="3d"):
+        if dim == "3d":
+            Conv = nn.functional.conv3d
+        else:
+            Conv = nn.functional.conv2d
+
+        mu1 = Conv(img1, window, padding=window_size // 2, groups=channel)
+        mu2 = Conv(img2, window, padding=window_size // 2, groups=channel)
+
+        mu1_sq = mu1.pow(2)
+        mu2_sq = mu2.pow(2)
+        mu1_mu2 = mu1 * mu2
+
+        sigma1_sq = Conv(img1 * img1, window, padding=window_size // 2, groups=channel) - mu1_sq
+        sigma2_sq = Conv(img2 * img2, window, padding=window_size // 2, groups=channel) - mu2_sq
+        sigma12 = Conv(img1 * img2, window, padding=window_size // 2, groups=channel) - mu1_mu2
+
+        C1 = 0.01 ** 2
+        C2 = 0.03 ** 2
+
+        ssim_map = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) / ((mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2))
+
+        if size_average:
+            return ssim_map.mean()
+        else:
+            return ssim_map.mean(1).mean(1).mean(1)
+
+
+
+    def forward(self, img1, img2):
+        if self.dim == "3d":
+            (_, channel, _, _, _) = img1.size()
+        else:
+            (_, channel, _, _) = img1.size()
+
+        if channel == self.channel and self.window.data.type() == img1.data.type():
+            window = self.window
+        else:
+            window = SSIM.create_window(self.window_size, channel, self.dim)
+
+            if img1.is_cuda:
+                window = window.cuda(img1.get_device())
+            window = window.type_as(img1)
+
+            self.window = window
+            self.channel = channel
+
+        return SSIM._ssim(img1, img2, window, self.window_size, channel, self.size_average, self.dim)
+
+
+
+class SemiSupervisedLoss:
+
+    def __init__(self):
+        self.loss_un = nn.MSELoss()
+        self.loss_age = nn.L1Loss()
+        self.loss_sex = nn.BCEWithLogitsLoss()
+        self.sigmoid = nn.Sigmoid()
+        self.last_computed_losses = dict()
+
+    def sex_accuracy(self, logit, y_true):
+        return float((logit > 0.5).eq(y_true).sum().cpu().numpy()/y_true.size()[0])
+
+
+    def __call__(self, inputs, targets):
+        # [in, ["age", "sex"]]
+        self.last_computed_losses = {
+            'reconstruction': self.loss_un(inputs[0], targets[0]),
+            'age': self.loss_age(inputs[1][:,0], targets[1][:,0]),
+            'sex': self.loss_sex(inputs[1][:,1], targets[1][:,1]),
+            'accuracy': self.sex_accuracy(self.sigmoid(inputs[1][:,1]), targets[1][:,1])
+        }
+
+        return self.last_computed_losses['reconstruction'] * 10 + 0.1*self.last_computed_losses['age'] + \
+               self.last_computed_losses['sex']
+
+    def get_aux_losses(self):
+        return self.last_computed_losses
+
 class MultiTaskLoss:
 
     def __init__(self,l_losses, weights=None, net=None, reg=None, lambda_reg=1e-3, l_metrics=None):
@@ -54,13 +160,14 @@ class MultiTaskLoss:
         self.lambda_reg = lambda_reg
         self.net = net
         self.weights = weights or [1 for _ in l_losses]
-        self.last_computed_losses = [0 for _ in l_losses]
+        self.last_computed_losses = {"%s component %i" % (type(l).__name__, i): 0 for i,l in enumerate(l_losses)}
 
     def __call__(self, inputs, targets):
         out = 0
         for i, loss in enumerate(self.losses):
-            loss_ = loss(inputs[:, i], targets[:, i])
-            self.last_computed_losses[i] = float(loss_)
+            loss_ = loss(inputs[i], targets[i])
+            name_loss = "%s component %i" % (type(loss).__name__, i)
+            self.last_computed_losses[name_loss] = float(loss_)
             out += self.weights[i] * loss_
         if self.reg == "l2":
             l2_reg = 0
@@ -70,13 +177,8 @@ class MultiTaskLoss:
 
         return out
 
-    def log_errors(self, history, fold, epoch, it):
-        for i, loss in enumerate(self.losses):
-            history.log((fold, epoch, it), **{"%s component %i" % (type(loss).__name__, i): self.last_computed_losses[i]})
-
-    # def log_metrics(self, inputs, targets, history, epoch, it):
-    #     for i, metric in enumerate(self.metrics):
-    #         history.log((epoch, it), **{"%s component %i" % (type(metric).__name__, i): metric(inputs, targets)})
+    def get_aux_losses(self):
+        return self.last_computed_losses
 
 class RMSELoss:
 
@@ -94,7 +196,6 @@ class L12Loss:
 
 
     def __call__(self, inputs, targets):
-
         return self.alpha * self.l1_loss(inputs, targets) + self.beta * self.l2_loss(inputs, targets)
 
 

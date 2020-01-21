@@ -23,7 +23,7 @@ model_urls = {
 class VGG_GA(nn.Module):
 
     def __init__(self, nb_convs, in_channels=3, num_classes=2, init_weights=True, dim="3d",
-                 with_grid_attention=True, batchnorm=True):
+                 with_grid_attention=False, batchnorm=True):
         assert len(nb_convs) == 5
         super(VGG_GA, self).__init__()
         assert dim in ["3d", "2d"]
@@ -35,27 +35,24 @@ class VGG_GA(nn.Module):
         _conv = nn.Conv3d if dim == "3d" else nn.Conv2d
         _batchnorm = nn.BatchNorm3d if dim == "3d" else nn.BatchNorm2d
 
-        self.name = "VGG_GA"
+        self.name = "VGG"
 
         self.conv1 = ConvBlock(in_channels, filters[0], batchnorm, n_convs=nb_convs[0],
                                _conv=_conv, _batchnorm=_batchnorm)
-        self.maxpool1 = eval("nn.MaxPool{}(kernel_size=2)".format(dim))
+        self.maxpool = eval("nn.MaxPool{}(kernel_size=2)".format(dim))
 
         self.conv2 = ConvBlock(filters[0], filters[1], batchnorm, n_convs=nb_convs[1],
                                _conv=_conv, _batchnorm=_batchnorm)
-        self.maxpool2 = eval("nn.MaxPool{}(kernel_size=2)".format(dim))
 
         self.conv3 = ConvBlock(filters[1], filters[2], batchnorm, n_convs=nb_convs[2],
                                _conv=_conv, _batchnorm=_batchnorm)
-        self.maxpool3 = eval("nn.MaxPool{}(kernel_size=2)".format(dim))
 
         self.conv4 = ConvBlock(filters[2], filters[3], batchnorm, n_convs=nb_convs[3],
                                _conv=_conv, _batchnorm=_batchnorm)
-        self.maxpool4 = eval("nn.MaxPool{}(kernel_size=2)".format(dim))
 
         self.conv5 = ConvBlock(filters[3], filters[4], batchnorm, n_convs=nb_convs[4],
                                _conv=_conv, _batchnorm=_batchnorm)
-        self.avgpool = eval("nn.AdaptiveAvgPool{}(1)".format(dim))
+        self.avgpool = eval("nn.AdaptiveAvgPool{}(7)".format(dim))
 
         if with_grid_attention:
             attention_block = GridAttentionBlock3D if dim == "3d" else GridAttentionBlock2D
@@ -67,7 +64,13 @@ class VGG_GA(nn.Module):
             )
         else:
             self.classifier = nn.Sequential(
-                nn.Linear(filters[4], num_classes)
+                nn.Linear(filters[4] * 7 * 7, 4096),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.5),
+                nn.Linear(4096, 4096),
+                nn.ReLU(True),
+                nn.Dropout(0.5),
+                nn.Linear(4096, num_classes)
             )
 
         if init_weights:
@@ -76,16 +79,16 @@ class VGG_GA(nn.Module):
     def forward(self, x):
         # Feature Extraction
         conv1 = self.conv1(x)
-        maxpool1 = self.maxpool1(conv1)
+        maxpool1 = self.maxpool(conv1)
 
         conv2 = self.conv2(maxpool1)
-        maxpool2 = self.maxpool2(conv2)
+        maxpool2 = self.maxpool(conv2)
 
         conv3 = self.conv3(maxpool2)
-        maxpool3 = self.maxpool3(conv3)
+        maxpool3 = self.maxpool(conv3)
 
         conv4 = self.conv4(maxpool3)
-        maxpool4 = self.maxpool4(conv4)
+        maxpool4 = self.maxpool(conv4)
 
         conv5 = self.conv5(maxpool4)
 

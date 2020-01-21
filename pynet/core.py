@@ -97,25 +97,31 @@ class Base(Observable):
         if use_cuda and not torch.cuda.is_available():
             raise ValueError("No GPU found: unset 'use_cuda' parameter.")
         if pretrained is not None:
-            checkpoint = torch.load(pretrained)
+            checkpoint = torch.load(pretrained, map_location=lambda storage, loc: storage)
             if hasattr(checkpoint, "state_dict"):
                 self.model.load_state_dict(checkpoint.state_dict())
             elif isinstance(checkpoint, dict):
                 if "model" in checkpoint:
-                    self.model.load_state_dict(checkpoint["model"], strict=False)
-                # if "optimizer" in checkpoint:
-                #     self.optimizer.load_state_dict(checkpoint["optimizer"])
-                #     for state in self.optimizer.state.values():
-                #         for k, v in state.items():
-                #             if torch.is_tensor(v):
-                #                 state[k] = v.to(self.device)
+                    try:
+                        self.model.load_state_dict(checkpoint["model"], strict=False)
+                    except BaseException as e:
+                        print('Error while loading the model\'s weights: %s' % str(e))
+                if "optimizer" in checkpoint:
+                    try:
+                        self.optimizer.load_state_dict(checkpoint["optimizer"])
+                        for state in self.optimizer.state.values():
+                            for k, v in state.items():
+                                if torch.is_tensor(v):
+                                    state[k] = v.to(self.device)
+                    except BaseException as e:
+                        print('Error while loading the optimizer\'s weights: %s' % str(e))
             else:
                 self.model.load_state_dict(checkpoint)
         self.model = self.model.to(self.device)
 
     def training(self, manager, nb_epochs, checkpointdir=None, fold_index=None,
                  scheduler=None, with_validation=True, with_visualization=False,
-                 nb_epochs_per_saving=1):
+                 nb_epochs_per_saving=1, exp_name=None):
         """ Train the model.
 
         Parameters
@@ -139,16 +145,19 @@ class Base(Observable):
             during the training process
         nb_epochs_per_saving: int, default 1,
             the number of epochs after which the model+optimizer's parameters are saved
+        exp_name: str, default None
+            the experience name that will be launched
         Returns
         -------
         train_history, valid_history: History
             the train/validation history.
         """
-        train_history = History(name="train")
+        train_history = History(name="Train_%s"%(exp_name or ""))
         if with_validation is not None:
-            valid_history = History(name="validation")
+            valid_history = History(name="Validation_%s"%(exp_name or ""))
         else:
             valid_history = None
+        train_visualizer, valid_visualizer = None, None
         if with_visualization:
             train_visualizer = Visualizer(train_history)
             if with_validation:
@@ -176,6 +185,7 @@ class Base(Observable):
                         epoch=epoch,
                         fold=fold,
                         outdir=checkpointdir,
+                        name=exp_name,
                         optimizer=self.optimizer)
                     train_history.save(
                         outdir=checkpointdir,
@@ -183,7 +193,7 @@ class Base(Observable):
                         fold=fold)
                 if with_validation:
                     _, loss, values = self.test(loaders.validation)
-                    valid_history.log((fold, epoch), loss=loss, **values)
+                    valid_history.log((fold, epoch), validation_loss=loss, **values)
                     valid_history.summary()
                     if valid_visualizer is not None:
                         valid_visualizer.refresh_current_metrics()
@@ -233,17 +243,25 @@ class Base(Observable):
             for name, metric in self.metrics.items():
                 if name not in values:
                     values[name] = 0
-                values[name] = float(metric(outputs, targets))
-            if history is not None:
-                if hasattr(self.loss, 'log_errors'):
-                    self.loss.log_errors(history, fold, epoch, iteration)
-                history.log((fold, epoch, iteration), loss=losses[-1], **values)
-            if iteration % 5 == 0:
+                values[name] += float(metric(outputs, targets)) / nb_batch
+            for name, aux_loss in (self.loss.get_aux_losses() if hasattr(self.loss, 'get_aux_losses') else dict()).items():
+                if name not in values:
+                    values[name] = 0
+                values[name] += float(aux_loss) / nb_batch
+            if iteration % 100 == 0:
                 if visualizer is not None:
                     visualizer.refresh_current_metrics()
                     if hasattr(self.model, "get_current_visuals"):
                         visuals = self.model.get_current_visuals()
                         visualizer.display_images(visuals)
+                    # try:
+                    #     visualizer.visualize_data(inputs, outputs[1], num_samples=10) # TODO: fix this (generalize it)
+                    # except Exception as e:
+                    #     print(e)
+                    #     pass
+
+        if history is not None:
+            history.log((fold, epoch), loss=np.mean(losses), **values)
         pbar.close()
         return np.mean(losses), values
 
@@ -295,8 +313,8 @@ class Base(Observable):
                             item.cpu().detach().numpy())
                 X.append(dataitem.inputs.cpu().detach().numpy())
             X = np.concatenate(X, axis=0)
-            for key, values in targets.items():
-                y_true.append(np.concatenate(values, axis=0))
+            for key, val in targets.items():
+                y_true.append(np.concatenate(val, axis=0))
             if len(y_true) == 1:
                 y_true = y_true[0]
         if with_visuals:
@@ -354,18 +372,33 @@ class Base(Observable):
                     batch_loss = self.loss(outputs, targets)
                     loss += float(batch_loss) / nb_batch
                     for name, metric in self.metrics.items():
+                        name += " on validation set"
                         if name not in values:
                             values[name] = 0
                         values[name] += metric(outputs, targets) / nb_batch
+                    for name, aux_loss in (self.loss.get_aux_losses() if hasattr(self.loss, 'get_aux_losses') else dict()).items():
+                        name += " on validation set"
+                        if name not in values:
+                            values[name] = 0
+                        values[name] += float(aux_loss) / nb_batch
             pbar.close()
             if len(visuals) > 0:
                 visuals = np.concatenate(visuals, axis=0)
-            y = torch.cat(y, 0)
-            if with_logit:
-                y = func.softmax(y, dim=1)
-            y = y.cpu().detach().numpy()
-            if predict:
-                y = np.argmax(y, axis=1)
+            try:
+                if isinstance(outputs, list):
+                    y = [torch.cat([y[i][j] for i in range(len(y))], 0) for j in range(len(outputs))]
+                else:
+                    y = torch.cat(y, 0)
+                if with_logit:
+                    y = func.softmax(y, dim=1)
+                if isinstance(outputs, list):
+                    y = [y[i].detach().cpu().numpy() for i in range(len(y))]
+                else:
+                    y = y.detach.cpu().numpy()
+                if predict:
+                    y = np.argmax(y, axis=1)
+            except Exception as e:
+                print(e)
         if with_visuals:
             return y, loss, values, visuals
         return y, loss, values

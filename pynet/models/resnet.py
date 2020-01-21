@@ -141,12 +141,17 @@ class ResNet(nn.Module):
         self.bn1 = norm_layer(self.inplanes)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool3d(kernel_size=3, stride=2, padding=1)
-        self.layer1 = self._make_layer(block, 64, layers[0])
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2,
+
+        resnet_channels = [64, 128, 256, 512]
+
+        channels = resnet_channels
+
+        self.layer1 = self._make_layer(block, channels[0], layers[0])
+        self.layer2 = self._make_layer(block, channels[1], layers[1], stride=2,
                                        dilate=replace_stride_with_dilation[0])
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2,
+        self.layer3 = self._make_layer(block, channels[2], layers[2], stride=2,
                                        dilate=replace_stride_with_dilation[1])
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2,
+        self.layer4 = self._make_layer(block, channels[3], layers[3], stride=2,
                                        dilate=replace_stride_with_dilation[2])
         self.avgpool = nn.AdaptiveAvgPool3d(1)
         if with_dropout:
@@ -159,9 +164,9 @@ class ResNet(nn.Module):
             self.compatibility_score = attention_block(in_channels=128, gating_channels=512,
                                                        inter_channels=512, sub_sample_factor=(1, 1, 1))
 
-            self.fc_ga = nn.Linear(512 * block.expansion + 128, num_classes)
+            self.fc_ga = nn.Linear(128, num_classes)
         else:
-            self.fc = nn.Linear(512 * block.expansion, num_classes)
+            self.fc = nn.Linear(channels[-1] * block.expansion, num_classes)
 
         for m in self.modules():
             if isinstance(m, nn.Conv3d):
@@ -229,8 +234,7 @@ class ResNet(nn.Module):
             conv_scored, self.attention_map = self.compatibility_score(x2, x5)
             pool_attention = self.avgpool(conv_scored)
             pool_attention = torch.flatten(pool_attention, 1)
-            x = torch.cat((pool_attention, x), dim=1)
-            x = self.fc_ga(x).squeeze(dim=1)
+            x = self.fc_ga(pool_attention).squeeze(dim=1)
         else:
             x = self.fc(x).squeeze(dim=1)
 

@@ -70,7 +70,7 @@ def test_model(model, shape):
     return out
 
 
-def checkpoint(model, epoch, fold, outdir, optimizer=None, **kwargs):
+def checkpoint(model, epoch, fold, outdir, name=None, optimizer=None, **kwargs):
     """ Save the weights of a given model.
 
     Parameters
@@ -89,8 +89,10 @@ def checkpoint(model, epoch, fold, outdir, optimizer=None, **kwargs):
     kwargs: dict
         others parameters to save.
     """
+
+    name = "{name}_{fold}_epoch_{epoch}.pth".format(name=name or "model",fold=fold,epoch=epoch)
     outfile = os.path.join(
-        outdir, "model_{0}_epoch_{1}.pth".format(fold, epoch))
+        outdir, name)
     if optimizer is not None:
         kwargs.update(optimizer=optimizer.state_dict())
     torch.save({
@@ -225,6 +227,8 @@ def tensor2im(tensor):
             return tensor.detach().cpu().numpy()
     return tensor
 
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
 

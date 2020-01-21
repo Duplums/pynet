@@ -46,7 +46,8 @@ class UNet(nn.Module):
     def __init__(self, num_classes, in_channels=1, depth=5, 
                  start_filts=16, up_mode="transpose", down_mode="maxpool",
                  merge_mode="concat", batchnorm=False, dim="3d",
-                 skip_connections=False, mode="seg", input_size=None):
+                 skip_connections=False, mode="seg", input_size=None,
+                 nb_regressors=None, freeze_encoder=False):
         """ Init class.
 
         Parameters
@@ -61,7 +62,7 @@ class UNet(nn.Module):
             number of convolutional filters for the first conv.
         up_mode: string, default 'transpose'
             type of upconvolution. Choices: 'transpose' for transpose
-            convolution, 'upsample' for nearest neighbour upsamplin, 'max_unpool' for max unpooling (with indices)
+            convolution, 'upsample' for nearest neighbour upsampling
         down_mode: string, default 'maxpool'
             Choices: 'maxpool' for maxpool, 'conv' for convolutions with stride=2
         merge_mode: str, default 'concat', can be 'add' or None
@@ -93,9 +94,7 @@ class UNet(nn.Module):
         else:
             raise ValueError("'{}' is not a valid mode. Should be in 'seg' "
                              "or 'classif' mode.".format(mode))
-        if up_mode in ("transpose", "upsample", "max_unpool"):
-            if down_mode != "maxpool" and up_mode == "max_unpool":
-                raise ValueError("The down-mode must be 'maxpool' if the up-mode is 'max_unpool'")
+        if up_mode in ("transpose", "upsample"):
             self.up_mode = up_mode
         else:
             raise ValueError(
@@ -120,20 +119,17 @@ class UNet(nn.Module):
                 "the moment because it doesn't make sense to use nearest "
                 "neighbour to reduce depth channels (by half).")
 
-        if skip_connections and down_mode == "maxpool":
-            raise ValueError(
-                "It is not allowed to do maxpooling as down-sampling with skip connections currently."
-            )
-
         # Declare class parameters
         self.num_classes = num_classes
         self.in_channels = in_channels
         self.start_filts = start_filts
         self.input_size = input_size
+        self.nb_regressors = nb_regressors
         self.depth = depth
         self.down = []
         self.up = [] # Useful in seg mode
         self.classifier = None # Useful in classif mode
+        self.freeze_encoder = freeze_encoder
         self.name = "UNet_D%i_%s" % (self.depth, self.mode)
 
         # Create the encoder pathway
@@ -145,6 +141,12 @@ class UNet(nn.Module):
                 Down(in_channels, out_channels, self.dim, down_mode=self.down_mode,
                      pooling=down_sampling, batchnorm=batchnorm,
                      skip_connections=skip_connections))
+
+        # Freeze all the layers if necessary
+        if self.freeze_encoder:
+            for down_m in self.down:
+                for param in down_m.parameters():
+                    param.requires_grad = False
 
         if self.mode == "seg" or self.mode == "seg_classif":
             # Create the decoder pathway
@@ -161,7 +163,8 @@ class UNet(nn.Module):
             final_dims = np.array(self.input_size[1:]) // 2 ** (self.depth - 1)
             final_dims=np.insert(final_dims, 0, self.start_filts * 2**(self.depth-1)) # insert the channels
 
-            self.classifier = Classifier(input_size=final_dims, num_classes=self.num_classes, dim=self.dim)
+            self.classifier = Classifier(self.nb_regressors, input_size=final_dims,
+                                         dim=self.dim, batchnorm=batchnorm)
 
         # Add the list of modules to current module
         self.down = nn.ModuleList(self.down)
@@ -189,23 +192,15 @@ class UNet(nn.Module):
 
     def forward(self, x):
         encoder_outs = []
-        encoder_masks = []
         for module in self.down:
-            if module.down_mode == "maxpool" and module.pooling:
-                x, indices = module(x)
-                encoder_masks.append(indices)
-            else:
-                x = module(x)
-                encoder_masks.append(None)
+            x = module(x)
             encoder_outs.append(x)
         x_enc = x
         if self.mode == "seg" or self.mode == "seg_classif":
             encoder_outs = encoder_outs[:-1][::-1]
-            encoder_masks = encoder_masks[::-1]
             for cnt, module in enumerate(self.up):
                 x_up = encoder_outs[cnt]
-                x_mask = encoder_masks[cnt]
-                x = module(x, x_up, x_mask)
+                x = module(x, x_up)
             # No softmax is used. This means you need to use
             # nn.CrossEntropyLoss in your training script,
             # as this module includes a softmax already.
@@ -219,37 +214,31 @@ class UNet(nn.Module):
         if self.mode == "classif":
             return x_classif
 
-        return x_seg + x_classif
-
-    def visualize_data(self, visualizer, inputs, outputs):
-        assert inputs.shape == outputs.shape
-        # in our case, inputs == targets
-        N, b_shape = inputs.shape[0], inputs.shape[1:]
-        visuals = np.array([tensor2im(inputs), tensor2im(outputs)], dtype=np.float32) # shape 2xNxCxHxW(xD) (if 3D)
-        visuals = visuals.swapaxes(0, 1).reshape((2*N,) + b_shape)
-        labels = np.array([['Input pic {}'.format(k), 'Output pic {}'.format(k)] for k in range(inputs.shape[0])]).flatten()
-
-        visualizer.display_images(visuals, labels, ncols=2)
-
+        return [x_seg, x_classif]
 
 
 class Classifier(nn.Module):
-    def __init__(self, input_size, num_classes, dim):
+    def __init__(self, nb_regressors, input_size, dim, batchnorm=True):
         super(Classifier, self).__init__()
         self.input_size = input_size
-        self.num_classes = num_classes
+        self.num_classes = nb_regressors
+        self.batchnorm = batchnorm
         self.dim = dim
-        self.maxpooling = nn.AdaptiveMaxPool3d(1)
-        self.fc1 = nn.Linear(input_size[0], 64)
-        self.relu = nn.ReLU(True)
+        channels_in = input_size[0]
+        self.relu = nn.ReLU(inplace=True)
+        self.conv = eval("nn.Conv{}({}, 16, kernel_size=3, stride=1, padding=1, bias=True)".
+                         format(dim, channels_in))
+        self.fc1 = nn.Linear(16*np.product(self.input_size[1:]), 100)
         self.dropout = nn.Dropout(0.5)
-        self.fc2 = nn.Linear(64, self.num_classes)
+        self.fc2 = nn.Linear(100, self.num_classes)
 
     def forward(self, x):
-        x = self.maxpooling(x)
-        x = self.fc1(x)
+        x = self.conv(x)
         x = self.relu(x)
+        x = torch.flatten(x, 1)
+        x = self.fc1(x)
         x = self.dropout(x)
+        x = self.relu(x)
         x = self.fc2(x)
         return x
 
@@ -262,11 +251,10 @@ class DoubleConv(nn.Module):
         self.conv1 = eval(
                     "nn.Conv{0}(in_channels, out_channels, kernel_size, "
                     "stride=stride, padding=padding, bias=bias)".format(dim))
-        self.relu1 = nn.ReLU()
         self.conv2 = eval(
                     "nn.Conv{0}(out_channels, out_channels, kernel_size, "
                     "stride=stride, padding=padding, bias=bias)".format(dim))
-        self.relu2 = nn.ReLU()
+        self.relu = nn.ReLU(inplace=True)
         if batchnorm:
             self.norm1 = eval(
                     "nn.BatchNorm{0}(out_channels)".format(dim))
@@ -277,12 +265,12 @@ class DoubleConv(nn.Module):
         x = self.conv1(x)
         if self.batchnorm:
             x = self.norm1(x)
-        x = self.relu1(x)
+        x = self.relu(x)
 
         x = self.conv2(x)
         if self.batchnorm:
             x = self.norm2(x)
-        x = self.relu2(x)
+        x = self.relu(x)
 
         return x
 
@@ -297,10 +285,10 @@ def UpConv(in_channels, out_channels, dim, mode="transpose"):
         return nn.Sequential(collections.OrderedDict([
             ("up", nn.Upsample(mode="nearest", scale_factor=2)),
             ("conv1x", Conv1x1x1(in_channels, out_channels, dim))]))
-    else:
-        return eval(
-            "nn.MaxUnpool{0}(2)".format(dim)
-        )
+    # else:
+    #     return eval(
+    #         "nn.MaxUnpool{0}(2)".format(dim)
+    #     )
 
 def Conv1x1x1(in_channels, out_channels, dim, groups=1):
     return eval(
@@ -321,7 +309,7 @@ class Down(nn.Module):
         self.down_mode = down_mode
         self.skip_connections = skip_connections
         if self.down_mode == "maxpool":
-            self.maxpool = eval("nn.MaxPool{0}(2, return_indices=True)".format(dim))
+            self.maxpool = eval("nn.MaxPool{0}(2)".format(dim))
             self.doubleconv = DoubleConv(in_channels, out_channels, dim, batchnorm=batchnorm)
         else:
             self.downconv = eval("nn.Conv{0}(in_channels, out_channels, kernel_size=2, stride=2)".format(dim))
@@ -333,22 +321,16 @@ class Down(nn.Module):
     def forward(self, x):
         if self.down_mode == "maxpool":
             if self.pooling:
-                x, indices = self.maxpool(x)
+                x = self.maxpool(x)
             x = self.doubleconv(x)
         else:
-            if self.skip_connections:
-                if self.pooling:
-                    x_down = self.downconv(x)
-                    x = self.doubleconv(x_down)
+            if self.pooling:
+                x_down = self.downconv(x)
+                x = self.doubleconv(x_down)
+                if self.skip_connections:
                     x = x + x_down
-                else:
-                    x = self.doubleconv(x)
             else:
-                if self.pooling:
-                    x = self.downconv(x)
                 x = self.doubleconv(x)
-        if self.down_mode == "maxpool" and self.pooling:
-            return x, indices
         return x
 
 
@@ -369,11 +351,9 @@ class Up(nn.Module):
         else:
             self.doubleconv = DoubleConv(out_channels, out_channels, dim, batchnorm=batchnorm)
 
-    def forward(self, x_down, x_up, x_mask):
-        if self.up_mode == "max_unpool":
-            x_down = self.upconv(x_down, x_mask)
-        else:
-            x_down = self.upconv(x_down)
+    def forward(self, x_down, x_up):
+        x_down = self.upconv(x_down)
+
         if self.merge_mode == "concat":
             x = torch.cat((x_up, x_down), dim=1)
         elif self.merge_mode == "add":

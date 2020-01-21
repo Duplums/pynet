@@ -13,6 +13,9 @@ Module that privides common display tools.
 
 from .image import plot_data
 from .image import plot_segmentation_data
-from .network import plot_net
-from .network import plot_net_rescue
+try:
+    from .network import plot_net
+    from .network import plot_net_rescue
+except ModuleNotFoundError:
+    print("Warning: impossible to import network module")
 from .signal import plot_history

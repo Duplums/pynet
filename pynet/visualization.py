@@ -1,5 +1,6 @@
 import visdom
 import numpy as np
+import torch
 from subprocess import Popen, PIPE
 import sys
 
@@ -52,11 +53,32 @@ class Visualizer:
                           win=id)
 
 
+    def visualize_data(self, inputs, outputs, num_samples=None):
+        from pynet.utils import tensor2im
+        assert inputs.shape == outputs.shape
+        # in our case, inputs == targets
+
+        valid_indices = [idx for idx in range(len(inputs)) if inputs[idx].max() > 0]
+
+        if num_samples:
+            valid_indices = np.random.choice(valid_indices, num_samples, replace=False)
+
+        inputs = inputs[valid_indices]
+        outputs = outputs[valid_indices]
+
+        N, b_shape = inputs.shape[0], inputs.shape[1:]
+        visuals = np.array([tensor2im(inputs), tensor2im(outputs)], dtype=np.float32) # shape 2xNxCxHxW(xD) (if 3D)
+        visuals = visuals.swapaxes(0, 1).reshape((2*N,) + b_shape)
+        labels = np.array([['Input pic {}'.format(k), 'Output pic {}'.format(k)] for k in range(inputs.shape[0])]).flatten()
+
+        self.display_images(visuals, labels, ncols=2)
+
+
     def t_SNE(self, features, labels):
 
         self.vis.embeddings(features, labels)
 
-    def display_images(self, images, labels=None, ncols=1):
+    def display_images(self, images, labels=None, ncols=None):
         """
         :param images: numpy array with shape NxCxHxW(xD) (N=nb of images, C=nb of channels H=height, W=width, D=depth)
         :param labels: list of N label (str)
@@ -75,7 +97,7 @@ class Visualizer:
 
         (N,C,H,W) = images.shape[:4]
         D = images.shape[4] if len(images.shape) == 5 else None
-
+        ncols = ncols or (1 if D is None else 3)
         # First, rescale the images
         images = np.nan_to_num([(img - np.min(img))/(np.max(img) - np.min(img)) for img in images])
 

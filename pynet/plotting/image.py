@@ -54,6 +54,127 @@ def display_attention_maps(images, attention_maps, slicing_mode="middle_slicing"
     plt.subplots_adjust(wspace=0, hspace=0)
     plt.show()
 
+def age_discrimination(X, y, age_max_down, age_min_up):
+    from scipy import ndimage
+    X_1 = np.sum(X[y < age_max_down], axis=0)
+    X_2 = np.sum(X[y > age_min_up], axis=0)
+
+    X_diff = (X_2 - X_1)[0]
+    (H, W, D) = X_diff.shape
+
+    plt.subplot(1, 3, 1)
+    plt.imshow(ndimage.rotate(X_diff[H//2,:,:], 90), cmap='coolwarm')
+    plt.axis('off')
+    plt.subplot(1, 3, 2)
+    plt.imshow(ndimage.rotate(X_diff[:,W//2,:], 90), cmap='coolwarm')
+    plt.axis('off')
+    plt.subplot(1, 3, 3)
+    plt.imshow(ndimage.rotate(X_diff[:,:,D//2], 90), cmap='coolwarm')
+    plt.axis('off')
+    plt.colorbar()
+    fig = plt.gcf()
+    fig.suptitle('Difference between [{}, {}]y ({} people) and [{}, {}]y ({} people)'.format(
+        np.min(y), age_max_down, len(X[y < age_max_down]), age_min_up, np.max(y), len(X[y > age_min_up])))
+    plt.show()
+
+def plot_losses(train_history, val_history=None, val_metrics_mapping=None,
+                titles=None, ylabels=None, saving_path=None, output_format="png"):
+    """
+    :param train_history: History object
+        a history from a training process including several metrics
+    :param val_history: History object
+        the validation history of the training process. The metric's names could be slightly different
+    :param val_metrics_mapping: dict
+        a mapping between the validation metric name and the corresponding training metric
+    :param titles: dict
+        a mapping between a metric and the corresponding plot title
+    :param ylabels: dict
+        a mapping between a metric and the corresponding y-axis title
+    :param saving_path: str
+        the path where the the plot will be saved
+    :param output_format: str ('png', 'jpg', 'pdf'...)
+        the output format of the plot that will be saved
+    :return:
+    """
+    metrics = train_history.metrics
+    if val_history:
+        val_metrics_mapping = val_metrics_mapping or dict()
+        val_metrics = [val_metrics_mapping.get(m) or m for m in val_history.metrics]
+        inv_val_metrics_mapping = {v: k for (k, v) in val_metrics_mapping.items()}
+    fig, axes = plt.subplots(len(metrics), 1)
+    for ax_indice, metric in enumerate(metrics):
+        x_axis, y_train = train_history[metric]
+        y_val = None
+        if val_history is not None and metric in val_metrics:
+            x_axis_, y_val = val_history[inv_val_metrics_mapping.get(metric) or metric]
+            if x_axis != x_axis_:
+                print("Warning: x-axis of {} in the validation history is different from the one in the train history. "
+                      "Ignored".format(metric))
+                y_val = None
+
+        if len(x_axis) > 0 and type(x_axis[0]) == tuple:
+            # We assume the x-axis is formatted as: (fold, epoch)
+            if len(x_axis[0]) != 2:
+                raise ValueError("Unkown x-axis format: {}".format(x_axis[0]))
+            nb_epochs = len([x[1] for x in x_axis if x[0] == 0])
+            nb_folds = len(x_axis) // nb_epochs
+            x_axis = [x[1] for x in x_axis if x[0] == 0] # get only the 1st fold (all the same)
+            Y_train = [[y_train[i*nb_epochs+j] for j in range(nb_epochs)] for i in range(nb_folds)]
+            mean_y_train = np.mean(Y_train, axis=0)
+            std_y_train = np.std(Y_train, axis=0)
+            if y_val is not None:
+                Y_val = [[y_val[i * nb_epochs + j] for j in range(nb_epochs)] for i in range(nb_folds)]
+                mean_y_val= np.mean(Y_val, axis=0)
+                std_y_val = np.std(Y_val, axis=0)
+        elif len(x_axis) > 0 and type(x_axis[0]) == int:
+            mean_y_train, mean_y_val = y_train, y_val
+            std_y_train, std_y_val = 0, 0
+        else:
+            raise ValueError("x-axis type or len impossible: {}".format(x_axis))
+
+        axes[ax_indice].plot(x_axis, mean_y_train, label="training", color="red")
+        axes[ax_indice].fill_between(x_axis, mean_y_train-3*std_y_train, mean_y_train+3*std_y_train, facecolor="red",
+                                     alpha=0.3)
+        if y_val is not None:
+            axes[ax_indice].plot(x_axis, mean_y_val, label="validation", color="blue")
+            axes[ax_indice].fill_between(x_axis, mean_y_val-3*std_y_val, mean_y_val+3*std_y_val, facecolor="blue", alpha=0.3)
+
+        axes[ax_indice].set_xlabel("Epochs")
+        axes[ax_indice].set_ylabel((ylabels or dict()).get(metric) or metric)
+        axes[ax_indice].set_title("\n\n"+((titles or dict()).get(metric) or metric))
+        axes[ax_indice].legend(loc='upper left')
+        axes[ax_indice].grid()
+    plt.subplots_adjust(hspace=1.0)
+    plt.show()
+
+    if saving_path:
+        plt.savefig(saving_path, format=output_format)
+
+
+# We assume a binary classification where Y_true has shape (n_samples,) and Y_pred has shape (n_samples, 2)
+# or (n_samples,)
+def roc_curve_plot(Y_pred, Y_true, title=None):
+    from sklearn import metrics
+    n_samples = len(Y_true)
+    assert n_samples == len(Y_pred)
+    assert len(Y_pred.shape) <= 2
+    if len(Y_pred.shape) == 2:
+        Y_pred = Y_pred[:, 1]
+
+    fpr, tpr, thresholds = metrics.roc_curve(Y_true, Y_pred)
+
+    plt.plot(fpr, tpr)
+    plt.xlabel('False positive rate')
+    plt.ylabel('True positive rate')
+    if title:
+        plt.title('ROC curve of {}'.format(title))
+    else:
+        plt.title('ROC curve')
+    plt.plot([0, 1], [0, 1], 'k--')
+    plt.show()
+
+
+
 def linear_reg_plots(Y_pred, Y_true):
     from sklearn.linear_model import LinearRegression
     from scipy.stats import pearsonr
@@ -76,7 +197,7 @@ def linear_reg_plots(Y_pred, Y_true):
 
 
 def plot_data(data, slice_axis=2, nb_samples=5, channel=0, labels=None,
-              random=True, rgb=False):
+              random=True, rgb=False, cmap=None):
     """ Plot an image associated data.
 
     Currently support 2D or 3D dataset of the form (samples, channels, dim).
@@ -137,10 +258,10 @@ def plot_data(data, slice_axis=2, nb_samples=5, channel=0, labels=None,
         for cnt2 in range(nb_channels):
             if rgb:
                 im = data[ind].transpose(1, 2, 0)
-                cmap = None
+                cmap = cmap or None
             else:
                 im = data[ind, cnt2]
-                cmap = "gray"
+                cmap = cmap or "gray"
             plt.subplot(nb_channels, nb_samples, nb_samples * cnt2 + cnt1 + 1)
             plt.axis("off")
             if cnt2 == 0 and labels is None:
