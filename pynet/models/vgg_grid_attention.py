@@ -64,13 +64,13 @@ class VGG_GA(nn.Module):
             )
         else:
             self.classifier = nn.Sequential(
-                nn.Linear(filters[4] * 7 * 7, 4096),
+                nn.Linear(filters[4] * 7 * 7 * 7, 128),
                 nn.ReLU(inplace=True),
                 nn.Dropout(0.5),
-                nn.Linear(4096, 4096),
+                nn.Linear(128, 128),
                 nn.ReLU(True),
                 nn.Dropout(0.5),
-                nn.Linear(4096, num_classes)
+                nn.Linear(128, num_classes)
             )
 
         if init_weights:

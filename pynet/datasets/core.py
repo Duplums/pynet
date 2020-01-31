@@ -14,7 +14,7 @@ Module that provides core functions to load and split a dataset.
 # Imports
 from collections import namedtuple, OrderedDict
 import torch
-from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
+from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler, RandomSampler
 import progressbar
 import numpy as np
 import pandas as pd
@@ -33,7 +33,7 @@ class DataManager(object):
 
     def __init__(self, input_path, metadata_path, output_path=None,
                  labels=None, stratify_label=None, custom_stratification=None,
-                 projection_labels=None, number_of_folds=10, batch_size=1, weighted_random_sampler=False,
+                 projection_labels=None, number_of_folds=10, batch_size=1, sampler=None,
                  input_transforms=None, output_transforms=None, labels_transforms=None, stratify_label_transforms=None,
                  data_augmentation=None, add_input=False, patch_size=None, input_size=None, test_size=0.1,
                  **dataloader_kwargs):
@@ -69,8 +69,9 @@ class DataManager(object):
             the number of folds that will be used in the cross validation.
         batch_size: int, default 1
             the size of each mini-batch.
-        weighted_random_sampler: bool, default False
-            Whether we use a weighted random sampler (to deal with imbalanced classes issue) or not
+        sampler: str in ["random", "weighted_random"], default None
+            Whether we use a weighted random sampler (to deal with imbalanced classes issue) or random sampler (without
+            replacement, to introduce shuffling in batches)
         input_transforms, output_transforms: list of callable, default None
             transforms a list of samples with pre-defined transformations.
         data_augmentation: list of callable, default None
@@ -117,9 +118,10 @@ class DataManager(object):
         self.data_augmentation = data_augmentation or []
         self.add_input = add_input
         self.data_loader_kwargs = dataloader_kwargs
-        self.weighted_random_sampler = weighted_random_sampler
+        assert sampler in [None, "weighted_random", "random"], "Unknown sampler: %s" % str(sampler)
+        self.sampler = sampler
 
-        if self.weighted_random_sampler:
+        if self.sampler == "weighted_random":
             if self.stratify_label is None:
                 raise ValueError('Impossible to use the WeightedRandomSampler if no stratify label is available.')
             class_samples_count = [0 for _ in range(len(set(self.stratify_label[mask])))] # len == nb of classes
@@ -251,7 +253,7 @@ class DataManager(object):
             if len(list_samples) == 0 or getattr(list_samples[-1], key) is None:
                 data[key] = None
             else:
-                data[key] = torch.stack([torch.as_tensor(getattr(s, key)) for s in list_samples], dim=0).float()
+                data[key] = torch.stack([torch.as_tensor(getattr(s, key), dtype=torch.float) for s in list_samples], dim=0).float()
         if data["labels"] is not None:
             data["labels"] = data["labels"].type(torch.FloatTensor)
         return DataItem(**data)
@@ -282,10 +284,12 @@ class DataManager(object):
                 self.dataset["test"], batch_size=self.batch_size,
                 collate_fn=self.collate_fn, **self.data_loader_kwargs)
         if train:
-            if self.weighted_random_sampler:
+            if self.sampler == "weighted_random":
                 indices = self.dataset["train"][fold_index].indices
                 samples_weigths = self.sampler_weigths[np.array(self.stratify_label[indices], dtype=np.int32)]
                 sampler = WeightedRandomSampler(samples_weigths, len(indices), replacement=True)
+            elif self.sampler == "random":
+                sampler = RandomSampler(self.dataset["train"][fold_index])
             _train = DataLoader(
                 self.dataset["train"][fold_index], batch_size=self.batch_size, sampler=sampler,
                 collate_fn=self.collate_fn, **self.data_loader_kwargs)

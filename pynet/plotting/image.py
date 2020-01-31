@@ -78,7 +78,7 @@ def age_discrimination(X, y, age_max_down, age_min_up):
     plt.show()
 
 def plot_losses(train_history, val_history=None, val_metrics_mapping=None,
-                titles=None, ylabels=None, saving_path=None, output_format="png"):
+                titles=None, ylabels=None, saving_path=None, output_format="png", ylim=None):
     """
     :param train_history: History object
         a history from a training process including several metrics
@@ -133,17 +133,20 @@ def plot_losses(train_history, val_history=None, val_metrics_mapping=None,
             raise ValueError("x-axis type or len impossible: {}".format(x_axis))
 
         axes[ax_indice].plot(x_axis, mean_y_train, label="training", color="red")
-        axes[ax_indice].fill_between(x_axis, mean_y_train-3*std_y_train, mean_y_train+3*std_y_train, facecolor="red",
+        axes[ax_indice].fill_between(x_axis, mean_y_train-std_y_train, mean_y_train+3*std_y_train, facecolor="red",
                                      alpha=0.3)
         if y_val is not None:
             axes[ax_indice].plot(x_axis, mean_y_val, label="validation", color="blue")
-            axes[ax_indice].fill_between(x_axis, mean_y_val-3*std_y_val, mean_y_val+3*std_y_val, facecolor="blue", alpha=0.3)
+            axes[ax_indice].fill_between(x_axis, mean_y_val-std_y_val, mean_y_val+3*std_y_val, facecolor="blue", alpha=0.3)
 
         axes[ax_indice].set_xlabel("Epochs")
         axes[ax_indice].set_ylabel((ylabels or dict()).get(metric) or metric)
         axes[ax_indice].set_title("\n\n"+((titles or dict()).get(metric) or metric))
         axes[ax_indice].legend(loc='upper left')
+        if ylim is not None:
+            axes[ax_indice].set_ylim(ylim)
         axes[ax_indice].grid()
+
     plt.subplots_adjust(hspace=1.0)
     plt.show()
 

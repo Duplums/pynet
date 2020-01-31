@@ -248,17 +248,17 @@ class Base(Observable):
                 if name not in values:
                     values[name] = 0
                 values[name] += float(aux_loss) / nb_batch
-            if iteration % 100 == 0:
+            if iteration % 10 == 0:
                 if visualizer is not None:
                     visualizer.refresh_current_metrics()
                     if hasattr(self.model, "get_current_visuals"):
                         visuals = self.model.get_current_visuals()
                         visualizer.display_images(visuals)
-                    # try:
-                    #     visualizer.visualize_data(inputs, outputs[1], num_samples=10) # TODO: fix this (generalize it)
-                    # except Exception as e:
-                    #     print(e)
-                    #     pass
+                    try:
+                        visualizer.visualize_data(inputs, outputs)
+                    except Exception as e:
+                        print(e)
+                        pass
 
         if history is not None:
             history.log((fold, epoch), loss=np.mean(losses), **values)

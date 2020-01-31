@@ -224,23 +224,21 @@ class Classifier(nn.Module):
         self.num_classes = nb_regressors
         self.batchnorm = batchnorm
         self.dim = dim
-        channels_in = input_size[0]
-        self.relu = nn.ReLU(inplace=True)
-        self.conv = eval("nn.Conv{}({}, 16, kernel_size=3, stride=1, padding=1, bias=True)".
-                         format(dim, channels_in))
-        self.fc1 = nn.Linear(16*np.product(self.input_size[1:]), 100)
+        self.fc1 = nn.Linear(128*5*6*5, 100)
         self.dropout = nn.Dropout(0.5)
-        self.fc2 = nn.Linear(100, self.num_classes)
+        self.fc2 = nn.Linear(100, 50)
+        self.fc3 = nn.Linear(50, self.num_classes)
+        self.relu = nn.LeakyReLU(inplace=True)
+        self.avgpool = nn.AdaptiveAvgPool3d((5, 6, 5))
 
     def forward(self, x):
-        x = self.conv(x)
-        x = self.relu(x)
-        x = torch.flatten(x, 1)
-        x = self.fc1(x)
+        x = torch.flatten(self.avgpool(x), 1)
+        x = self.relu(self.fc1(x))
         x = self.dropout(x)
-        x = self.relu(x)
-        x = self.fc2(x)
-        return x
+        x = self.relu(self.fc2(x))
+        x = self.dropout(x)
+        x = self.relu(self.fc3(x))
+        return x.squeeze()
 
 
 class DoubleConv(nn.Module):

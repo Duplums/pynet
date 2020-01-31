@@ -24,7 +24,10 @@ class LabelMapping(object):
         self.mappings = mappings
 
     def __call__(self, label):
-        return self.mappings[label]
+        if label in self.mappings:
+            return self.mappings[label]
+        else:
+            return float(label)
 
 
 class Normalize(object):
@@ -44,7 +47,7 @@ class Crop(object):
         self.copping_type = type
 
     def __call__(self, arr):
-        assert type(arr) == np.ndarray
+        assert isinstance(arr, np.ndarray)
         assert type(self.shape) == int or len(self.shape) == len(arr.shape)
 
         img_shape = arr.shape
