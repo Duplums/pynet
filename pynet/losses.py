@@ -45,12 +45,13 @@ class NCross_Entropy:
 
 
 class SSIM(torch.nn.Module):
-    def __init__(self, window_size=11, size_average=True, dim="3d"):
+    def __init__(self, window_size=11, size_average=True, dim="3d", device="cuda"):
         super(SSIM, self).__init__()
         self.window_size = window_size
+        self.device = device
         self.size_average = size_average
         self.channel = 1
-        self.window = SSIM.create_window(window_size, self.channel, dim)
+        self.window = SSIM.create_window(window_size, self.channel, dim, device)
         self.dim = dim
 
     @staticmethod
@@ -59,7 +60,7 @@ class SSIM(torch.nn.Module):
         return gauss / gauss.sum()
 
     @staticmethod
-    def create_window(window_size, channel, dim):
+    def create_window(window_size, channel, dim, device):
         _1D_window = SSIM.gaussian(window_size, 1.5).unsqueeze(1)
         _2D_window = _1D_window.mm(_1D_window.t()).float().unsqueeze(0).unsqueeze(0)
         if dim == "2d":
@@ -68,7 +69,7 @@ class SSIM(torch.nn.Module):
             _3D_window = _1D_window.mm(_2D_window.reshape(1, -1)).reshape(window_size, window_size, window_size).\
                 float().unsqueeze(0).unsqueeze(0)
             window = Variable(_3D_window.expand(channel, 1, window_size, window_size, window_size).contiguous())
-        return window
+        return window.to(device)
 
     @staticmethod
     def _ssim(img1, img2, window, window_size, channel, size_average=True, dim="3d"):
@@ -109,7 +110,7 @@ class SSIM(torch.nn.Module):
         if channel == self.channel and self.window.data.type() == img1.data.type():
             window = self.window
         else:
-            window = SSIM.create_window(self.window_size, channel, self.dim)
+            window = SSIM.create_window(self.window_size, channel, self.dim, self.device)
 
             if img1.is_cuda:
                 window = window.cuda(img1.get_device())

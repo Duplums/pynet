@@ -69,6 +69,14 @@ def test_model(model, shape):
     loss.backward()
     return out
 
+def get_pickle_obj(path):
+    import pickle
+    with open(path, 'rb') as f:
+        obj = pickle.load(f)
+    return obj
+
+def get_chk_name(name, fold, epoch):
+    return "{name}_{fold}_epoch_{epoch}.pth".format(name=name or "model",fold=fold,epoch=epoch)
 
 def checkpoint(model, epoch, fold, outdir, name=None, optimizer=None, **kwargs):
     """ Save the weights of a given model.
@@ -90,11 +98,14 @@ def checkpoint(model, epoch, fold, outdir, name=None, optimizer=None, **kwargs):
         others parameters to save.
     """
 
-    name = "{name}_{fold}_epoch_{epoch}.pth".format(name=name or "model",fold=fold,epoch=epoch)
+    name = get_chk_name(name, fold, epoch)
     outfile = os.path.join(
         outdir, name)
     if optimizer is not None:
-        kwargs.update(optimizer=optimizer.state_dict())
+        if isinstance(optimizer, list):
+            kwargs.update({"opti_%i"%k: opti.state_dict() for k, opti in enumerate(optimizer)})
+        else:
+            kwargs.update(optimizer=optimizer.state_dict())
     torch.save({
         "fold": fold,
         "epoch": epoch,

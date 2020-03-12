@@ -15,7 +15,7 @@ is loaded.
 # Imports
 import collections
 import numpy as np
-from scipy.ndimage import rotate
+from scipy.ndimage import rotate, affine_transform
 
 
 class LabelMapping(object):
@@ -24,6 +24,11 @@ class LabelMapping(object):
         self.mappings = mappings
 
     def __call__(self, label):
+        if isinstance(label, list) or isinstance(label, np.ndarray):
+            l_to_return = []
+            for l in label:
+                l_to_return.append(self.__call__(l))
+            return l_to_return
         if label in self.mappings:
             return self.mappings[label]
         else:
@@ -67,6 +72,66 @@ class Crop(object):
 
         return arr[tuple(indexes)]
 
+class GaussianNoise:
+    def __init__(self, std=0.1):
+        self.std = std
+
+    def __call__(self, arr):
+        return arr + np.random.normal(0, self.std, arr.shape)
+
+class RandomAffineTransform3d:
+    def __init__(self, angles, translate):
+        ## angles == list of int or tuple indicating the range of degrees to select from in each direction
+        ## translate == tuple of maximum absolute fraction translation shift in each direction
+        if type(angles) in [int, float]:
+            angles = [[-angles, angles] for _ in range(3)]
+        elif type(angles) == list and len(angles) == 3:
+            for i in range(3):
+                if type(angles[i]) in [int, float]:
+                    angles[i] = [-angles[i], angles[i]]
+        else:
+            raise ValueError("Unkown angles type: {}".format(type(angles)))
+        self.angles = angles
+        if type(translate) in [float, int]:
+            translate = (translate, translate, translate)
+        assert len(translate) == 3
+        self.translate = translate
+
+    def __call__(self, arr):
+        assert len(arr.shape) == 4 # == (C, H, W, D)
+        arr_shape = arr.shape
+
+        angles = [np.deg2rad(np.random.random() * (angle_max - angle_min) + angle_min)
+                  for (angle_min, angle_max) in self.angles]
+        alpha, beta, gamma = angles[0], angles[1], angles[2]
+        rot_x = np.array([[1, 0, 0], [0, np.cos(gamma), -np.sin(gamma)], [0, np.sin(gamma), np.cos(gamma)]])
+        rot_y = np.array([[np.cos(beta), 0, np.sin(beta)], [0, 1, 0], [-np.sin(beta), 0, np.cos(beta)]])
+        rot_z = np.array([[np.cos(alpha), -np.sin(alpha), 0], [np.sin(alpha), np.cos(alpha), 0], [0, 0, 1]])
+        R = np.matmul(np.matmul(rot_z, rot_y), rot_x)
+        middle_point = (np.asarray(arr_shape[1:]) - 1) / 2
+        offset = middle_point - np.dot(middle_point, R)
+
+        translation = [np.round(np.random.random() * (2*arr.shape[i+1]*t) - arr.shape[i+1]*t)
+                       for i,t in enumerate(self.translate)]
+        out = np.zeros(arr.shape, dtype=arr.dtype)
+
+        for c in range(arr.shape[0]):
+            affine_transform(arr[c], R.T, offset=offset+translation, output=out[c], mode='nearest')
+
+        return out
+
+
+if __name__ == '__main__':
+    from pynet.plotting.image import plot_anat_array
+    import nibabel
+
+    t = RandomAffineTransform3d(40, 0.1)
+    test_1 = np.array([nibabel.load('/neurospin/psy/hcp/derivatives/cat12vbm/sub-165941/mri/mwp1165941_3T_T1w_MPR1.nii').get_data()])
+    plot_anat_array(test_1[0])
+    test_1_trans = t(test_1)
+    plot_anat_array(test_1_trans[0])
+
+
 class Rotation(object):
     def __init__(self, angle, axes=(1,2), reshape=True, **kwargs):
         self.angle = angle
@@ -79,13 +144,15 @@ class Rotation(object):
 
 class RandomRotation(object):
     """ nd generalisation of https://pytorch.org/docs/stable/torchvision/transforms.html section RandomRotation"""
-    def __init__(self, angles, axes=(1,2), reshape=True, **kwargs):
+    def __init__(self, angles, axes=(0,2), reshape=True, **kwargs):
         if type(angles) in [int, float]:
             self.angles = [-angles, angles]
         elif type(angles) == list and len(angles) == 2 and angles[0] < angles[1]:
             self.angles = angles
         else:
             raise ValueError("Unkown angles type: {}".format(type(angles)))
+        if axes is None:
+            print('Warning: rotation plane will be determined randomly')
         self.axes = axes
         self.reshape = reshape
         self.rotate_kwargs = kwargs

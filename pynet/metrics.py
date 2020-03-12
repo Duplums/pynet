@@ -16,8 +16,36 @@ import torch
 import numpy as np
 import torch.nn.functional as func
 import torch.nn as nn
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, balanced_accuracy_score, confusion_matrix
 
+def get_confusion_matrix(y_pred, y):
+    y_pred = y_pred.data.max(dim=1)[1]
+    if isinstance(y, torch.Tensor):
+        y = y.detach().cpu().numpy()
+    return confusion_matrix(y, y_pred.detach().cpu().numpy())
+
+def balanced_accuracy(y_pred, y):
+    y_pred = y_pred.data.max(dim=1)[1] # get the indices of the maximum
+    return balanced_accuracy_score(y.detach().cpu().numpy(), y_pred.detach().cpu().numpy())
+
+# Apply the 3D Sobel filter to an input pytorch tensor
+class Sobel3D:
+    def __init__(self, padding=0, norm=False, device='cpu'):
+        h = [1, 2, 1]
+        h_d = [1, 0, -1]
+        G_z = [[[h_d[k] * h[i] * h[j] for k in range(3)] for j in range(3)] for i in range(3)]
+        G_y = [[[h_d[j] * h[i] * h[k] for k in range(3)] for j in range(3)] for i in range(3)]
+        G_x = [[[h_d[i] * h[j] * h[k] for k in range(3)] for j in range(3)] for i in range(3)]
+        self.G = torch.tensor([[G_x], [G_y], [G_z]], dtype=torch.float, device=device)
+        self.padding = padding
+        self.norm = norm
+
+    def __call__(self, x):
+        # x: 3d tensor (B, C, T, H, W)
+        x_filtered =  nn.functional.conv3d(x, self.G, padding=self.padding)
+        if self.norm:
+            x_filtered = torch.sqrt(torch.sum(x_filtered ** 2, dim=1)).unsqueeze(1)
+        return x_filtered
 
 def accuracy(y_pred, y):
     y_pred = y_pred.data.max(dim=1)[1] # get the indices of the maximum
@@ -71,10 +99,12 @@ def multiclass_dice(y_pred, y):
 
 METRICS = {
     "accuracy": accuracy,
+    "balanced_accuracy": balanced_accuracy,
     "multiclass_dice": multiclass_dice,
     "RMSE": RMSE,
     "specificity": specificity,
     "sensitivity": sensitivity,
+    "confusion_matrix": get_confusion_matrix,
     "roc_auc": lambda y_pred, y: roc_auc_score(y, y_pred[:,1].detach().cpu().numpy())
     # cf. scikit doc: " The binary case expects a shape (n_samples,), and the scores
     # must be the scores of the class with the greater label."

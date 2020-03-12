@@ -12,18 +12,20 @@ Core classes.
 """
 
 # System import
-import re
-import warnings
+import os
+import pickle
 from collections import OrderedDict
 
 # Third party import
 from torchvision import models
 import torch
 import torch.nn.functional as func
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 import numpy as np
 
 # Package import
+from pynet.datasets.core import DataManager
 from pynet.utils import checkpoint
 from pynet.history import History
 from pynet.visualization import Visualizer
@@ -92,7 +94,7 @@ class Base(Observable):
             if name not in mmetrics.METRICS:
                 raise ValueError("Metric '{0}' not yet supported: you can try "
                                  "to fill the 'METRICS' factory, or ask for "
-                                 "some help!")
+                                 "some help!".format(name))
             self.metrics[name] = mmetrics.METRICS[name]
         if use_cuda and not torch.cuda.is_available():
             raise ValueError("No GPU found: unset 'use_cuda' parameter.")
@@ -119,14 +121,14 @@ class Base(Observable):
                 self.model.load_state_dict(checkpoint)
         self.model = self.model.to(self.device)
 
-    def training(self, manager, nb_epochs, checkpointdir=None, fold_index=None,
+    def training(self, managers, nb_epochs, checkpointdir=None, fold_index=None,
                  scheduler=None, with_validation=True, with_visualization=False,
                  nb_epochs_per_saving=1, exp_name=None):
         """ Train the model.
 
         Parameters
         ----------
-        manager: a pynet DataManager
+        managers: a pynet DataManager or a list of DataManagers
             a manager containing the train and validation data.
         nb_epochs: int, default 100
             the number of epochs.
@@ -152,6 +154,9 @@ class Base(Observable):
         train_history, valid_history: History
             the train/validation history.
         """
+        if isinstance(managers, DataManager):
+            managers = [managers]
+
         train_history = History(name="Train_%s"%(exp_name or ""))
         if with_validation is not None:
             valid_history = History(name="Validation_%s"%(exp_name or ""))
@@ -164,18 +169,18 @@ class Base(Observable):
                 valid_visualizer = Visualizer(valid_history, offset_win=10)
         print(self.loss)
         print(self.optimizer)
-        folds = range(manager.number_of_folds)
+        folds = range(managers[0].number_of_folds)
         if fold_index is not None:
             folds = [fold_index]
         for fold in folds:
-            reset_weights(self.model)
-            loaders = manager.get_dataloader(
+            loaders = [manager.get_dataloader(
                 train=True,
                 validation=True,
-                fold_index=fold)
+                fold_index=fold) for manager in managers]
             for epoch in range(nb_epochs):
                 self.notify_observers("before_epoch", epoch=epoch, fold=fold)
-                loss, values = self.train(loaders.train, train_history, train_visualizer, fold, epoch)
+                loss, values = self.train([loader.train for loader in loaders], train_history,
+                                          train_visualizer, fold, epoch)
                 train_history.summary()
                 if scheduler is not None:
                     scheduler.step(loss)
@@ -192,7 +197,7 @@ class Base(Observable):
                         epoch=epoch,
                         fold=fold)
                 if with_validation:
-                    _, loss, values = self.test(loaders.validation)
+                    _, loss, values = self.test([loader.validation for loader in loaders])
                     valid_history.log((fold, epoch), validation_loss=loss, **values)
                     valid_history.summary()
                     if valid_visualizer is not None:
@@ -203,15 +208,15 @@ class Base(Observable):
                             epoch=epoch,
                             fold=fold)
                 self.notify_observers("after_epoch", epoch=epoch, fold=fold)
+            reset_weights(self.model)
         return train_history, valid_history
 
-    def train(self, loader, history=None, visualizer=None, fold=None, epoch=None):
+    def train(self, loaders, history=None, visualizer=None, fold=None, epoch=None):
         """ Train the model on the trained data.
 
         Parameters
         ----------
-        loader: a pytorch Dataset
-            the data laoder.
+        loaders: a pytorch Dataloader or a list of Dataloaders
 
         Returns
         -------
@@ -220,31 +225,45 @@ class Base(Observable):
         values: dict
             the values of the metrics.
         """
+        if isinstance(loaders, DataLoader):
+            loaders = [loaders]
+
         self.model.train()
-        nb_batch = len(loader)
+        nb_batch = np.min([len(loader) for loader in loaders])
         values = {}
         pbar = tqdm(total=nb_batch, desc="Mini-Batch")
         losses = []
-        for iteration, dataitem in enumerate(loader):
+        for iteration, dataitems in enumerate(zip(*loaders)):
             pbar.update()
-            inputs = dataitem.inputs.to(self.device)
-            targets = []
-            for item in (dataitem.outputs, dataitem.labels):
-                if item is not None:
-                    targets.append(item.to(self.device))
-            if len(targets) == 1:
-                targets = targets[0]
+            inputs = [dataitem.inputs.to(self.device) for dataitem in dataitems]
+            list_targets = []
+            for dataitem in dataitems:
+                _targets = []
+                for item in (dataitem.outputs, dataitem.labels):
+                    if item is not None:
+                        _targets.append(item.to(self.device))
+                if len(_targets) == 1:
+                    _targets = _targets[0]
+                list_targets.append(_targets)
+
             self.optimizer.zero_grad()
-            outputs = self.model(inputs)
-            batch_loss = self.loss(outputs, targets)
+            outputs = self.model(*inputs)
+            batch_loss = self.loss(outputs, *list_targets)
             batch_loss.backward()
             losses.append(float(batch_loss))
             self.optimizer.step()
+
+            # self.optimizer[1].zero_grad()
+            # outputs = self.model(*inputs, with_disc=True)
+            # batch_loss = self.loss[1](outputs, *list_targets)
+            # batch_loss.backward()
+            # self.optimizer[1].step()
+
             for name, metric in self.metrics.items():
                 if name not in values:
                     values[name] = 0
-                values[name] += float(metric(outputs, targets)) / nb_batch
-            for name, aux_loss in (self.loss.get_aux_losses() if hasattr(self.loss, 'get_aux_losses') else dict()).items():
+                values[name] += float(metric(outputs, *list_targets)) / nb_batch
+            for name, aux_loss in (self.model.get_aux_losses() if hasattr(self.model, 'get_aux_losses') else dict()).items():
                 if name not in values:
                     values[name] = 0
                 values[name] += float(aux_loss) / nb_batch
@@ -253,24 +272,24 @@ class Base(Observable):
                     visualizer.refresh_current_metrics()
                     if hasattr(self.model, "get_current_visuals"):
                         visuals = self.model.get_current_visuals()
-                        visualizer.display_images(visuals)
-                    try:
-                        visualizer.visualize_data(inputs, outputs)
-                    except Exception as e:
-                        print(e)
-                        pass
+                        visualizer.display_images(visuals, ncols=2)
+                    # try:
+                    #     visualizer.visualize_data(*inputs, outputs)
+                    # except Exception as e:
+                    #     print(e)
+                    #     pass
 
         if history is not None:
             history.log((fold, epoch), loss=np.mean(losses), **values)
         pbar.close()
         return np.mean(losses), values
 
-    def testing(self, manager, with_logit=False, predict=False, with_visuals=False):
+    def testing(self, managers, with_logit=False, predict=False, with_visuals=False, saving_dir=None, exp_name=None):
         """ Evaluate the model.
 
         Parameters
         ----------
-        manager: a pynet DataManager
+        manager: a pynet DataManager or a list of pynet DataManagers
             a manager containing the test data.
         with_logit: bool, default False
             apply a softmax to the result.
@@ -278,7 +297,6 @@ class Base(Observable):
             take the argmax over the channels.
         with_visuals: bool, default False
             returns the visuals got from the model
-
         Returns
         -------
         y: array-like
@@ -292,36 +310,44 @@ class Base(Observable):
         values: dict
             the values of the metrics if true data availble.
         """
-        loaders = manager.get_dataloader(test=True)
+        if isinstance(managers, DataManager):
+            managers = [managers]
+
+        loaders = [manager.get_dataloader(test=True) for manager in managers]
         if with_visuals:
             y, loss, values, visuals = self.test(
-                loaders.test, with_logit=with_logit, predict=predict, with_visuals=with_visuals)
+                [loader.test for loader in loaders], with_logit=with_logit, predict=predict, with_visuals=with_visuals)
         else:
             y, loss, values = self.test(
-                loaders.test, with_logit=with_logit, predict=predict, with_visuals=with_visuals)
+                [loader.test for loader in loaders], with_logit=with_logit, predict=predict, with_visuals=with_visuals)
         if loss == 0:
             loss, values, y_true = (None, None, None)
         else:
             y_true = []
             X = []
             targets = OrderedDict()
-            for dataitem in loaders.test:
-                for cnt, item in enumerate((dataitem.outputs,
-                                            dataitem.labels)):
-                    if item is not None:
-                        targets.setdefault(cnt, []).append(
-                            item.cpu().detach().numpy())
-                X.append(dataitem.inputs.cpu().detach().numpy())
-            X = np.concatenate(X, axis=0)
+            for loader in loaders:
+                for dataitem in loader.test:
+                    for cnt, item in enumerate((dataitem.outputs,
+                                                dataitem.labels)):
+                        if item is not None:
+                            targets.setdefault(cnt, []).append(
+                                item)
+                    X.append(dataitem.inputs)
+            X = torch.cat(X, dim=0).detach().cpu().numpy()
             for key, val in targets.items():
-                y_true.append(np.concatenate(val, axis=0))
+                y_true.append(torch.cat(val, dim=0).detach().cpu().numpy())
             if len(y_true) == 1:
                 y_true = y_true[0]
+        if saving_dir is not None:
+            with open(os.path.join(saving_dir, (exp_name or 'test')+'.pkl'), 'wb') as f:
+                pickle.dump({'y_pred': y, 'y_true': y_true, 'loss': loss, 'metrics': values}, f)
+
         if with_visuals:
             return y, X, y_true, loss, values, visuals
         return y, X, y_true, loss, values
 
-    def test(self, loader, with_logit=False, predict=False, with_visuals=False):
+    def test(self, loaders, with_logit=False, predict=False, with_visuals=False):
         """ Evaluate the model on the test or validation data.
 
         Parameter
@@ -342,41 +368,46 @@ class Base(Observable):
         values: dict
             the values of the metrics.
         """
+        if isinstance(loaders, DataLoader):
+            loaders = [loaders]
+
         self.model.eval()
-        nb_batch = len(loader)
+        nb_batch = np.min([len(loader) for loader in loaders])
         loss = 0
         values = {}
         visuals = []
         with torch.no_grad():
             y = []
             pbar = tqdm(total=nb_batch, desc="Mini-Batch")
-            for iteration, dataitem in enumerate(loader):
+            for iteration, dataitems in enumerate(zip(*loaders)):
                 pbar.update()
-                inputs = dataitem.inputs.to(self.device)
-                targets = []
-                for item in (dataitem.outputs, dataitem.labels):
-                    if item is not None:
-                        targets.append(item.to(self.device))
-                if len(targets) == 1:
-                    targets = targets[0]
-                elif len(targets) == 0:
-                    targets = None
-                outputs = self.model(inputs)
+                inputs = [dataitem.inputs.to(self.device) for dataitem in dataitems]
+                list_targets = []
+                for dataitem in dataitems:
+                    targets = []
+                    for item in (dataitem.outputs, dataitem.labels):
+                        if item is not None:
+                            targets.append(item.to(self.device))
+                    if len(targets) == 1:
+                        targets = targets[0]
+                    elif len(targets) == 0:
+                        targets = None
+                    if targets is not None:
+                        list_targets.append(targets)
+
+                outputs = self.model(*inputs)
                 if with_visuals:
                     visuals.append(self.model.get_current_visuals())
-                if isinstance(outputs, tuple):
-                    y.append(outputs[0])
-                else:
-                    y.append(outputs)
-                if targets is not None:
-                    batch_loss = self.loss(outputs, targets)
+                y.append(outputs)
+                if len(list_targets) > 0:
+                    batch_loss = self.loss(outputs, *list_targets)
                     loss += float(batch_loss) / nb_batch
                     for name, metric in self.metrics.items():
                         name += " on validation set"
                         if name not in values:
                             values[name] = 0
-                        values[name] += metric(outputs, targets) / nb_batch
-                    for name, aux_loss in (self.loss.get_aux_losses() if hasattr(self.loss, 'get_aux_losses') else dict()).items():
+                        values[name] += metric(outputs, *list_targets) / nb_batch
+                    for name, aux_loss in (self.model.get_aux_losses() if hasattr(self.model, 'get_aux_losses') else dict()).items():
                         name += " on validation set"
                         if name not in values:
                             values[name] = 0
@@ -394,7 +425,7 @@ class Base(Observable):
                 if isinstance(outputs, list):
                     y = [y[i].detach().cpu().numpy() for i in range(len(y))]
                 else:
-                    y = y.detach.cpu().numpy()
+                    y = y.detach().cpu().numpy()
                 if predict:
                     y = np.argmax(y, axis=1)
             except Exception as e:

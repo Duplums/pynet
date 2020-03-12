@@ -77,7 +77,7 @@ def age_discrimination(X, y, age_max_down, age_min_up):
         np.min(y), age_max_down, len(X[y < age_max_down]), age_min_up, np.max(y), len(X[y > age_min_up])))
     plt.show()
 
-def plot_losses(train_history, val_history=None, val_metrics_mapping=None,
+def plot_losses(train_history, val_history=None, val_metrics_mapping=None, val_metrics_suffix=None,
                 titles=None, ylabels=None, saving_path=None, output_format="png", ylim=None):
     """
     :param train_history: History object
@@ -99,9 +99,13 @@ def plot_losses(train_history, val_history=None, val_metrics_mapping=None,
     metrics = train_history.metrics
     if val_history:
         val_metrics_mapping = val_metrics_mapping or dict()
+        val_metrics_mapping = {m: val_metrics_mapping.get(m) or m.replace(val_metrics_suffix,'')
+                               for m in val_history.metrics}
         val_metrics = [val_metrics_mapping.get(m) or m for m in val_history.metrics]
         inv_val_metrics_mapping = {v: k for (k, v) in val_metrics_mapping.items()}
     fig, axes = plt.subplots(len(metrics), 1)
+    if len(metrics) == 1:
+        axes = [axes]
     for ax_indice, metric in enumerate(metrics):
         x_axis, y_train = train_history[metric]
         y_val = None
@@ -165,38 +169,51 @@ def roc_curve_plot(Y_pred, Y_true, title=None):
         Y_pred = Y_pred[:, 1]
 
     fpr, tpr, thresholds = metrics.roc_curve(Y_true, Y_pred)
-
+    auc = metrics.roc_auc_score(Y_true, Y_pred)
     plt.plot(fpr, tpr)
     plt.xlabel('False positive rate')
     plt.ylabel('True positive rate')
     if title:
-        plt.title('ROC curve of {}'.format(title))
+        plt.title('ROC curve of {}\nAUC={}'.format(title, auc))
     else:
-        plt.title('ROC curve')
+        plt.title('ROC curve\nAUC={}'.format(auc))
     plt.plot([0, 1], [0, 1], 'k--')
     plt.show()
 
 
 
-def linear_reg_plots(Y_pred, Y_true):
+def linear_reg_plots(Y_pred, Y_true, labels=None, cmap=plt.cm.plasma):
     from sklearn.linear_model import LinearRegression
     from scipy.stats import pearsonr
 
-    reg = LinearRegression().fit(Y_pred, Y_true)
+    reg = LinearRegression().fit(Y_true, Y_pred)
     coefs, intercepts = reg.coef_, reg.intercept_
     (r, pval) = pearsonr(Y_pred.flatten(), Y_true.flatten())
     MAE = np.mean(np.abs(Y_pred - Y_true))
     RMSE = np.sqrt(np.mean(np.abs(Y_pred-Y_true)**2))
 
-    plt.scatter(Y_pred, Y_true)
-    plt.plot(Y_pred, Y_pred, color='red', label='Perfect case')
-    plt.plot(Y_pred, [coefs[0]*y[0]+intercepts[0] for y in Y_pred], color='green', label='Linear Regression')
+    if labels is not None:
+        label_mapping = {l: cmap(int(i*float(cmap.N-1)/len(set(labels)))) for (i,l) in enumerate(set(labels))}
+        for l in label_mapping:
+            plt.scatter(Y_true[labels==l], Y_pred[labels==l], c=[label_mapping[l]], label=l)
+    else:
+        plt.scatter(Y_true, Y_pred)
+
+    plt.plot(Y_true, Y_true, color='red', label='Perfect case')
+    plt.plot(Y_true, [coefs[0]*y[0]+intercepts[0] for y in Y_true], color='green', label='Linear Regression')
     plt.legend()
-    plt.xlabel('Predicted age')
-    plt.ylabel('True age')
-    plt.title('Linear regression: $R^2={R2:.2f}$, $r={r:.2f}$ (p-value {pval:.2f} for H0=correlate),\n'
-              'MAE={mae:.2f}, RMSE={rmse:.2f}'.format(R2=reg.score(Y_pred, Y_true), r=r, pval=pval, mae=MAE, rmse=RMSE))
+    plt.xlabel('True age')
+    plt.ylabel('Predicted age')
+    plt.title('Linear regression: $R^2={R2:.2f}$, $r={r:.2f}$ (p-value {pval:1.2e} for $H_0$=not correlate),\n'
+              'MAE={mae:.2f}, RMSE={rmse:.2f}'.format(R2=reg.score(Y_true, Y_pred), r=r, pval=pval, mae=MAE, rmse=RMSE))
     plt.show()
+
+
+def plot_anat_array(data, **kwargs):
+    import nilearn.plotting as pt
+    import nibabel
+    nii_data = nibabel.Nifti1Image(np.array(data, dtype=np.float32), np.eye(4, dtype=np.float32))
+    v = pt.plot_img(nii_data, **kwargs)
 
 
 def plot_data(data, slice_axis=2, nb_samples=5, channel=0, labels=None,
@@ -241,6 +258,7 @@ def plot_data(data, slice_axis=2, nb_samples=5, channel=0, labels=None,
         indices = [slice_axis + 1, 0, indices[0] + 1, indices[1] + 1]
         slices = [img.transpose(indices) for img in data]
         data = np.concatenate(slices, axis=0)
+
     valid_indices = [
         idx for idx in range(len(data)) if data[idx, channel].max() > 0]
 

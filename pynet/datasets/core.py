@@ -15,8 +15,8 @@ Module that provides core functions to load and split a dataset.
 from collections import namedtuple, OrderedDict
 import torch
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler, RandomSampler
-import progressbar
 import numpy as np
+from tqdm import tqdm
 import pandas as pd
 from sklearn.model_selection import (
     KFold, StratifiedKFold, ShuffleSplit, StratifiedShuffleSplit)
@@ -26,14 +26,26 @@ SetItem = namedtuple("SetItem", ["test", "train", "validation"])
 DataItem = namedtuple("DataItem", ["inputs", "outputs", "labels"])
 
 
+class ListTensors:
+    def __init__(self, *tensor_list):
+        self.list_tensors = list(tensor_list)
+
+    def __getitem__(self, item):
+        return self.list_tensors[item]
+
+    def to(self, device, **kwargs):
+        for i, e in enumerate(self.list_tensors):
+            self.list_tensors[i] = e.to(device, **kwargs)
+        return self.list_tensors
+
 class DataManager(object):
     """ Data manager used to split a dataset in train, test and validation
     pytorch datasets.
     """
 
-    def __init__(self, input_path, metadata_path, output_path=None,
+    def __init__(self, input_path, metadata_path, output_path=None, add_to_input=None,
                  labels=None, stratify_label=None, custom_stratification=None,
-                 projection_labels=None, number_of_folds=10, batch_size=1, sampler=None,
+                 projection_labels=None, number_of_folds=10, batch_size=1, sampler=None, in_features_transforms=None,
                  input_transforms=None, output_transforms=None, labels_transforms=None, stratify_label_transforms=None,
                  data_augmentation=None, add_input=False, patch_size=None, input_size=None, test_size=0.1,
                  **dataloader_kwargs):
@@ -53,6 +65,8 @@ class DataManager(object):
         output_path: str, default None
             the path to the numpy array containing the output tensor data
             that will be splited/loaded.
+        add_to_input: list of str, default None
+            list of features to add to the input
         labels: list of str, default None
             in case of classification/regression, the name of the column(s)
             in the metadata table to be predicted.
@@ -85,7 +99,8 @@ class DataManager(object):
         df = pd.read_csv(metadata_path, sep="\t")
         mask = DataManager.get_mask(
             df=df,
-            projection_labels=projection_labels)
+            projection_labels=projection_labels,
+            check_nan=labels)
 
         mask_indices = DataManager.get_indices_from_mask(mask)
 
@@ -93,7 +108,7 @@ class DataManager(object):
         # index at the end (in __getitem__ of ArrayDataset)
 
         self.inputs = np.load(input_path, mmap_mode='r')
-        self.outputs, self.labels, self.stratify_label = (None, None, None)
+        self.outputs, self.labels, self.stratify_label, self.features_to_add = (None, None, None, None)
         if output_path is not None:
             self.outputs = np.load(output_path, mmap_mode='r')
 
@@ -110,6 +125,11 @@ class DataManager(object):
                     label = tf(label)
                 self.stratify_label[i] = label
 
+        if add_to_input is not None:
+            self.features_to_add = np.array([df[f].values for f in add_to_input]).transpose()
+
+        self.metadata_path = metadata_path
+        self.projection_labels = projection_labels
         self.number_of_folds = number_of_folds
         self.batch_size = batch_size
         self.input_transforms = input_transforms or []
@@ -144,7 +164,7 @@ class DataManager(object):
             if "validation" in custom_stratification:
                 val_mask = DataManager.get_mask(df, custom_stratification["validation"])
                 val_mask &= mask
-                val_indices = DataManager.get_indices_from_mask(val_indices)
+                val_indices = DataManager.get_indices_from_mask(val_mask)
                 self.number_of_folds = 1
 
             train_mask &= mask
@@ -172,7 +192,9 @@ class DataManager(object):
             assert len(self.labels) == len(self.inputs)
         self.dataset["test"] = ArrayDataset(
             self.inputs, test_indices, labels=self.labels,
+            features_to_add=self.features_to_add,
             outputs=self.outputs, add_input=self.add_input,
+            in_features_transforms=in_features_transforms,
             input_transforms = self.input_transforms,
             output_transforms = self.output_transforms,
             label_transforms = self.labels_transforms,
@@ -202,18 +224,24 @@ class DataManager(object):
 
         for fold_train_index, fold_val_index in gen:
             assert len(set(fold_val_index) & set(fold_train_index)) == 0
-            assert len(set(fold_val_index)) + len(set(fold_train_index)) == len(set(train_indices))
+
             train_dataset = ArrayDataset(
                 self.inputs, fold_train_index,
                 labels=self.labels, outputs=self.outputs,
-                add_input=self.add_input, input_transforms=self.input_transforms+self.data_augmentation,
+                features_to_add=self.features_to_add,
+                add_input=self.add_input,
+                in_features_transforms=in_features_transforms,
+                input_transforms=self.input_transforms+self.data_augmentation,
                 output_transforms=self.output_transforms+self.data_augmentation,
                 label_transforms=self.labels_transforms,
                 patch_size=patch_size, input_size=input_size)
             val_dataset = ArrayDataset(
                 self.inputs, fold_val_index,
                 labels=self.labels, outputs=self.outputs,
-                add_input=self.add_input, input_transforms=self.input_transforms,
+                features_to_add=self.features_to_add,
+                add_input=self.add_input,
+                in_features_transforms=in_features_transforms,
+                input_transforms=self.input_transforms,
                 output_transforms=self.output_transforms,
                 label_transforms=self.labels_transforms,
                 patch_size=patch_size, input_size=input_size
@@ -253,9 +281,14 @@ class DataManager(object):
             if len(list_samples) == 0 or getattr(list_samples[-1], key) is None:
                 data[key] = None
             else:
-                data[key] = torch.stack([torch.as_tensor(getattr(s, key), dtype=torch.float) for s in list_samples], dim=0).float()
-        if data["labels"] is not None:
-            data["labels"] = data["labels"].type(torch.FloatTensor)
+                if key == "inputs" and self.features_to_add is not None:
+                    input_ = torch.stack([torch.as_tensor(getattr(s, key)[0], dtype=torch.float) for s in list_samples], dim=0)
+                    features = torch.stack([torch.as_tensor(getattr(s, key)[1], dtype=torch.float) for s in list_samples], dim=0)
+                    data[key] = ListTensors(input_, features)
+                else:
+                    data[key] = torch.stack([torch.as_tensor(getattr(s, key), dtype=torch.float) for s in list_samples], dim=0)
+        # if data["labels"] is not None:
+        #     data["labels"] = data["labels"].type(torch.LongTensor)
         return DataItem(**data)
 
     def get_dataloader(self, train=False, validation=False, test=False,
@@ -301,7 +334,7 @@ class DataManager(object):
         return SetItem(test=_test, train=_train, validation=_validation)
 
     @staticmethod
-    def get_mask(df, projection_labels=None):
+    def get_mask(df, projection_labels=None, check_nan=None):
         """ Filter a table.
 
         Parameters
@@ -311,28 +344,88 @@ class DataManager(object):
         projection_labels: dict, default None
             selects only the data that match the conditions in the dict
             {<column_name>: <value>}.
-
+        check_nan: list of str, default None
+            check if there is nan in the selected columns. Select only the rows without nan
         Returns
         -------
         mask: a list of boolean values
         """
 
         mask = np.ones(len(df), dtype=np.bool)
-        if projection_labels is None:
-            return mask
-        for (col, val) in projection_labels.items():
-            if isinstance(val, list):
-                mask &= getattr(df, col).isin(val)
-            elif val is not None:
-                mask &= getattr(df, col).eq(val)
+        if projection_labels is not None:
+            for (col, val) in projection_labels.items():
+                if isinstance(val, list):
+                    mask &= getattr(df, col).isin(val)
+                elif val is not None:
+                    mask &= getattr(df, col).eq(val)
+        if check_nan is not None:
+            for col in check_nan:
+                mask &= ~getattr(df, col).isna()
         return mask
 
+
+    def dump_augmented_data(self, N_per_class, output_path, output_path_df):
+        ## It takes all the dataset and computes, for each class sample, transformations that preserve the class
+        #  distribution as homogeneously as possible
+        def apply_transforms(obj, tfs):
+            obj_tf = obj
+            for tf in tfs:
+                obj_tf = tf(obj)
+            return obj_tf
+
+        # First, get the mask to consider only relevant data for our application
+        df = pd.read_csv(self.metadata_path, sep="\t")
+        mask = DataManager.get_mask(df=df, projection_labels=self.projection_labels)
+
+        class_repartition = [0 for _ in range(len(set(self.labels[mask])))] # len == nb of classes
+        for i, label in enumerate(self.labels[mask]):
+            label = apply_transforms(label, self.labels_transforms)
+            class_repartition[label] += 1
+
+        n_classes = len(class_repartition)
+        if isinstance(N_per_class, int):
+            N_per_class = [N_per_class for _ in class_repartition]
+        elif isinstance(N_per_class, list):
+            assert len(N_per_class) == n_classes
+
+        missing_samples_per_class = [max(N_per_class[i] - class_repartition[i], 0) for i in range(n_classes)]
+        adding_samples_per_class = [missing_samples_per_class[i]//class_repartition[i] + 1
+                                    if missing_samples_per_class[i] > 0 else 0 for i in range(n_classes)]
+
+        len_X_augmented = np.sum(missing_samples_per_class) + np.sum(class_repartition)
+
+        X_to_dump = np.memmap(output_path, dtype='float32', mode='w+', shape=(len_X_augmented,)+self.inputs[0].shape)
+        df_to_dump = np.zeros(shape=(len_X_augmented, len(df.columns)), dtype=object)
+        # For each class, add the missing samples with the data_augmentation_transforms
+        count = 0
+        pbar = tqdm(total=np.sum(mask), desc="Input images processed")
+        for i in DataManager.get_indices_from_mask(mask):
+            pbar.update()
+            sample = self.inputs[i]
+            X_to_dump[count] = sample
+            df_to_dump[count] = df.values[i]
+            count += 1
+            label = apply_transforms(self.labels[i], self.labels_transforms)
+            if missing_samples_per_class[label] > 0:
+                for j in range(adding_samples_per_class[label]):
+                    if missing_samples_per_class[label] > 0:
+                        x_transformed = sample
+                        for tf in self.data_augmentation:
+                            x_transformed = tf(x_transformed)
+                        X_to_dump[count] = x_transformed
+                        df_to_dump[count] = df.values[i]
+                        count += 1
+                        missing_samples_per_class[label] -= 1
+
+        df_to_dump = pd.DataFrame(df_to_dump, columns=df.columns)
+        df_to_dump.to_csv(output_path_df)
 
 class ArrayDataset(Dataset):
     """ A dataset based on numpy array.
     """
-    def __init__(self, inputs, indices, labels=None, outputs=None,
-                 add_input=False, input_transforms=None, output_transforms=None,
+    def __init__(self, inputs, indices, labels=None, outputs=None, features_to_add=None,
+                 add_input=False, in_features_transforms=None,
+                 input_transforms=None, output_transforms=None,
                  label_transforms=None, patch_size=None, input_size=None):
         """ Initialize the class.
 
@@ -342,6 +435,8 @@ class ArrayDataset(Dataset):
             the input data.
         indices: iterable of int
             the list of indices that is considered in this dataset.
+        features_to_add: list of pd.Series
+            list of features to add to each input
         outputs: numpy array
             the output data.
         add_input: bool, default False
@@ -361,11 +456,12 @@ class ArrayDataset(Dataset):
         self.add_input = add_input
         self.patch_size = patch_size
         self.input_size = input_size
+        self.features_to_add = features_to_add
         if self.patch_size is not None:
             assert np.array(self.patch_size).shape == np.array(self.input_size).shape
             self.nb_patches_by_img = np.product(np.array(self.input_size) // np.array(self.patch_size))
             self.input_cached, self.output_cached, self.label_cached, self.input_indx_cached = None, None, None, None
-
+        self.in_features_transforms = in_features_transforms or []
         self.input_transforms = input_transforms or []
         self.output_transforms = output_transforms or []
         self.labels_transforms = label_transforms or []
@@ -439,6 +535,13 @@ class ArrayDataset(Dataset):
             if self.output_same_as_input:
                 _outputs = self.output_cached[indx]
 
+        # Finally, add the other input features, if any
+        if self.features_to_add is not None:
+            _features = self.features_to_add[self.indices[item]]
+            if self.in_features_transforms is not None:
+                for tf in self.in_features_transforms:
+                    _features = tf(_features)
+            _inputs = [_inputs, _features]
 
         return DataItem(inputs=_inputs, outputs=_outputs, labels=_labels)
 

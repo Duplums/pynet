@@ -14,7 +14,7 @@ Module that provides tools to compute class activation map.
 
 
 # Imports
-import skimage
+import skimage.transform as sk_transform
 import numpy as np
 import torch
 from torch.autograd import Variable
@@ -75,10 +75,11 @@ class ModelOutputs(object):
 class GradCam(object):
     """ Class for computing class activation map.
     """
-    def __init__(self, model, target_layers, labels, top=1):
+    def __init__(self, model, target_layers, labels, top=1, dim="2d"):
         self.model = model
         self.labels = labels
         self.top = top
+        self.dim = dim
         self.model.eval()
         self.extractor = ModelOutputs(self.model, target_layers)
 
@@ -88,26 +89,38 @@ class GradCam(object):
     def __call__(self, input):
         features, output = self.extractor(input)
         pred_prob = func.softmax(output, dim=1).data.squeeze()
-        probs, indices = pred_prob.sort(0, True)
+        probs, indices = pred_prob.data.max(dim=1)
         probs = probs.data.numpy()
         indices = indices.data.numpy()
         heatmaps = {}
         for cnt, (prob, index) in enumerate(zip(probs, indices)):
             if cnt == self.top:
                 break
-            label = self.labels[str(index)][1]
+            label = self.labels[index]
             line = "{0:.3f} -> {1}".format(prob, label)
             print(line)
-            one_hot = np.zeros((1, output.size()[-1]), dtype=np.float32)
+
+            ## Get the nb of classes (size(output) == [b, n_classes])
+            nb_classes = output.size()[-1]
+            one_hot = np.zeros((1, nb_classes), dtype=np.float32)
             one_hot[0][index] = 1
             one_hot = Variable(torch.from_numpy(one_hot), requires_grad=True)
+            ## Get only Y_c where c == index which is the most probable class for sample i
             one_hot = torch.sum(one_hot * output)
             self.model.features.zero_grad()
             self.model.classifier.zero_grad()
+
+            ## Back-propagate the gradients
             one_hot.backward(retain_graph=True)
+            ## Get only the last gradients computed through the last target layer
             gradients = self.extractor.get_activations_gradient()[-1]
             gradients = gradients.cpu().data.numpy()
-            pooled_gradients = np.mean(gradients, axis=(0, 2, 3))
+            # Avg spatially the gradient accross the channels (on scalar per channel)
+            if self.dim == "2d":
+                pooled_gradients = np.mean(gradients, axis=(0, 2, 3))
+            else:
+                pooled_gradients = np.mean(gradients, axis=(0, 2, 3, 4))
+            ## Get the activation map
             activations = features[-1]
             activations = activations.cpu().data.numpy()
             for cnt, weight in enumerate(pooled_gradients):
@@ -116,7 +129,7 @@ class GradCam(object):
             heatmap = np.maximum(heatmap, 0)
             heatmap -= np.min(heatmap)
             heatmap /= np.max(heatmap)
-            heatmap_highres = skimage.transform.resize(
+            heatmap_highres = sk_transform.resize(
                 heatmap, input.shape[2:])
             heatmaps[label] = (input, heatmap, heatmap_highres)
         return heatmaps
