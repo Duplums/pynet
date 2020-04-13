@@ -34,6 +34,19 @@ class LabelMapping(object):
         else:
             return float(label)
 
+class HardNormalization(object):
+    def __init__(self, min=-1.0, max=1.0, eps=1e-8):
+        self.min = min
+        self.max = max
+        self.eps = eps
+
+    def __call__(self, arr):
+        min_arr = np.min(arr)
+        max_arr = np.max(arr)
+        if np.abs(min_arr - max_arr) < self.eps:
+            return np.zeros_like(arr)
+        return ((self.max-self.min) * arr + (self.min*max_arr - self.max*min_arr))/(max_arr-min_arr)
+
 
 class Normalize(object):
     def __init__(self, mean=0.0, std=1.0, eps=1e-8):

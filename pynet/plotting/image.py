@@ -16,7 +16,9 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
+
 from skimage.transform import resize
+from sklearn.decomposition import PCA
 import torchvision
 import random
 
@@ -77,15 +79,43 @@ def age_discrimination(X, y, age_max_down, age_min_up):
         np.min(y), age_max_down, len(X[y < age_max_down]), age_min_up, np.max(y), len(X[y > age_min_up])))
     plt.show()
 
-def plot_losses(train_history, val_history=None, val_metrics_mapping=None, val_metrics_suffix=None,
-                titles=None, ylabels=None, saving_path=None, output_format="png", ylim=None):
+
+
+def plot_pca(X, labels=None, cmap=plt.cm.plasma, title=None):
+    # Assume that X has dimension (n_samples, ...) and labels is a list of n_samples labels
+    # associated to X
+    pca = PCA(n_components=2)
+    # Do the SVD
+    pca.fit(X.reshape(len(X), -1))
+    # Apply the reduction
+    PC = pca.transform(X.reshape(len(X), -1))
+    fig, ax = plt.subplots(figsize=(20, 30))
+    # Color each point according to its label
+    if labels is not None:
+        labels = np.array(labels)
+        label_mapping = {l: cmap(int(i * float(cmap.N - 1) / len(set(labels)))) for (i, l) in enumerate(set(labels))}
+        for l in label_mapping:
+            plt.scatter(PC[:,0][labels == l], PC[:,1][labels == l], c=[label_mapping[l]], label=l)
+    else:
+        plt.scatter(PC[:,0], PC[:,1])
+    plt.xlabel("PC1 (var=%.2f)" % pca.explained_variance_ratio_[0])
+    plt.ylabel("PC2 (var=%.2f)" % pca.explained_variance_ratio_[1])
+    plt.legend()
+    if title:
+        plt.title(title)
+    plt.axis('equal')
+    plt.show()
+
+def plot_losses(train_history, val_history=None, patterns_to_del=None,
+                metrics=None, experiment_names=None, titles=None, ylabels=None,
+                saving_path=None, output_format="png", ylim=None):
     """
-    :param train_history: History object
+    :param train_history: History object or list of History objects
         a history from a training process including several metrics
-    :param val_history: History object
+    :param val_history: History object or list of History objects
         the validation history of the training process. The metric's names could be slightly different
-    :param val_metrics_mapping: dict
-        a mapping between the validation metric name and the corresponding training metric
+    :param patterns_to_del: list or str
+        patterns to del from the metrics names
     :param titles: dict
         a mapping between a metric and the corresponding plot title
     :param ylabels: dict
@@ -96,67 +126,98 @@ def plot_losses(train_history, val_history=None, val_metrics_mapping=None, val_m
         the output format of the plot that will be saved
     :return:
     """
-    metrics = train_history.metrics
-    if val_history:
-        val_metrics_mapping = val_metrics_mapping or dict()
-        val_metrics_mapping = {m: val_metrics_mapping.get(m) or m.replace(val_metrics_suffix,'')
-                               for m in val_history.metrics}
-        val_metrics = [val_metrics_mapping.get(m) or m for m in val_history.metrics]
-        inv_val_metrics_mapping = {v: k for (k, v) in val_metrics_mapping.items()}
-    fig, axes = plt.subplots(len(metrics), 1)
-    if len(metrics) == 1:
-        axes = [axes]
+    if isinstance(train_history, History):
+        train_history = [train_history]
+    if isinstance(val_history, History):
+        val_history = [val_history]
+
+    list_dict_training = [t.to_dict(patterns_to_del=patterns_to_del, drop_last=True) for t in train_history]
+    if val_history is not None:
+        list_dict_val = [t.to_dict(patterns_to_del=patterns_to_del, drop_last=True) for t in val_history]
+        assert len(list_dict_training) == len(list_dict_val), "Unexpected number of validation exepriments"
+    else:
+        list_dict_val = None
+
+    _metrics = set.intersection(*[set(t.keys()) for t in list_dict_training])
+    if metrics is not None: # keep the order
+        _metrics = [m for m in metrics if m in _metrics]
+
+    fig, axes = plt.subplots(len(_metrics), 1, figsize=(10, 10), squeeze=False)
+    experiment_names = experiment_names or ['Exp %i'%i for i in list_dict_training]
+
     for ax_indice, metric in enumerate(metrics):
-        x_axis, y_train = train_history[metric]
-        y_val = None
-        if val_history is not None and metric in val_metrics:
-            x_axis_, y_val = val_history[inv_val_metrics_mapping.get(metric) or metric]
-            if x_axis != x_axis_:
-                print("Warning: x-axis of {} in the validation history is different from the one in the train history. "
-                      "Ignored".format(metric))
-                y_val = None
+        for (i, dict_train) in enumerate(list_dict_training):
+            Y_train = dict_train[metric]
+            Y_val = list_dict_val[i][metric] if (list_dict_val is not None and metric in list_dict_val[i]) else None
+            X = list(range(len(Y_train[0])))
+    
+            p = axes[ax_indice,0].plot(X, np.quantile(Y_train, 0.5, axis=0), label=experiment_names[i]+' (training)')
+            axes[ax_indice,0].fill_between(X, np.quantile(Y_train, 0.25, axis=0),
+                                         np.quantile(Y_train, 0.75, axis=0), facecolor=p[0].get_color(),
+                                         alpha=0.3)
+            if Y_val is not None:
+                p = axes[ax_indice,0].plot(X, np.quantile(Y_val, 0.5, axis=0), label=experiment_names[i]+' (val)')
+                axes[ax_indice,0].fill_between(X, np.quantile(Y_val, 0.25, axis=0),
+                                             np.quantile(Y_val, 0.75, axis=0), facecolor=p[0].get_color(), alpha=0.3)
+    
+            axes[ax_indice,0].set_xlabel("Epochs")
+            axes[ax_indice,0].set_ylabel((ylabels or dict()).get(metric) or metric)
+            axes[ax_indice,0].set_title("\n\n"+((titles or dict()).get(metric) or metric))
+            axes[ax_indice,0].legend(loc='upper left')
+            if ylim is not None:
+                if isinstance(ylim, list):
+                    axes[ax_indice,0].set_ylim(ylim)
+                elif isinstance(ylim, dict):
+                    try:
+                        axes[ax_indice,0].set_ylim(ylim[metric])
+                    except KeyError:
+                        pass
+            axes[ax_indice,0].grid()
 
-        if len(x_axis) > 0 and type(x_axis[0]) == tuple:
-            # We assume the x-axis is formatted as: (fold, epoch)
-            if len(x_axis[0]) != 2:
-                raise ValueError("Unkown x-axis format: {}".format(x_axis[0]))
-            nb_epochs = len([x[1] for x in x_axis if x[0] == 0])
-            nb_folds = len(x_axis) // nb_epochs
-            x_axis = [x[1] for x in x_axis if x[0] == 0] # get only the 1st fold (all the same)
-            Y_train = [[y_train[i*nb_epochs+j] for j in range(nb_epochs)] for i in range(nb_folds)]
-            mean_y_train = np.mean(Y_train, axis=0)
-            std_y_train = np.std(Y_train, axis=0)
-            if y_val is not None:
-                Y_val = [[y_val[i * nb_epochs + j] for j in range(nb_epochs)] for i in range(nb_folds)]
-                mean_y_val= np.mean(Y_val, axis=0)
-                std_y_val = np.std(Y_val, axis=0)
-        elif len(x_axis) > 0 and type(x_axis[0]) == int:
-            mean_y_train, mean_y_val = y_train, y_val
-            std_y_train, std_y_val = 0, 0
-        else:
-            raise ValueError("x-axis type or len impossible: {}".format(x_axis))
-
-        axes[ax_indice].plot(x_axis, mean_y_train, label="training", color="red")
-        axes[ax_indice].fill_between(x_axis, mean_y_train-std_y_train, mean_y_train+3*std_y_train, facecolor="red",
-                                     alpha=0.3)
-        if y_val is not None:
-            axes[ax_indice].plot(x_axis, mean_y_val, label="validation", color="blue")
-            axes[ax_indice].fill_between(x_axis, mean_y_val-std_y_val, mean_y_val+3*std_y_val, facecolor="blue", alpha=0.3)
-
-        axes[ax_indice].set_xlabel("Epochs")
-        axes[ax_indice].set_ylabel((ylabels or dict()).get(metric) or metric)
-        axes[ax_indice].set_title("\n\n"+((titles or dict()).get(metric) or metric))
-        axes[ax_indice].legend(loc='upper left')
-        if ylim is not None:
-            axes[ax_indice].set_ylim(ylim)
-        axes[ax_indice].grid()
-
-    plt.subplots_adjust(hspace=1.0)
+    plt.tight_layout()
     plt.show()
 
     if saving_path:
         plt.savefig(saving_path, format=output_format)
 
+if __name__ == '__main__':
+    from pynet.history import History
+    h_resnet = History.load('/neurospin/psy_sbox/bd261576/checkpoints/scz_prediction/tmp/Train_PsyNet_ResNet_Pretrained_4_epoch_99.pkl')
+    h_resnet_val = History.load('/neurospin/psy_sbox/bd261576/checkpoints/scz_prediction/tmp/Validation_PsyNet_ResNet_Pretrained_4_epoch_99.pkl')
+
+    h = History.load('/neurospin/psy_sbox/bd261576/checkpoints/scz_prediction/tmp/Train_PsyNet_4_epoch_99.pkl')
+    h_val = History.load('/neurospin/psy_sbox/bd261576/checkpoints/scz_prediction/tmp/Validation_PsyNet_4_epoch_99.pkl')
+
+    plot_losses(h, h_val,
+                patterns_to_del=['validation_', ' on validation set'],
+                metrics=['gm_loss', 'likelihood_u'],
+                titles={'gm_loss': 'Gaussian Mixture Loss ($\\alpha_m=0.5$)',
+                        'likelihood_u': 'Negative log-likelihood of $z_u$'},
+                ylabels={'gm_loss': '$L_{GM}$',
+                         'likelihood_u': "$-\log(L_{lkd}^u)$"},
+                experiment_names=['$E_s=E_u$'],
+                ylim={"gm_loss": [0, 1000], 'likelihood_u':[0, 1000]},
+                saving_path='/home/bd261576/Documents/BenchMark_IXI_HCP/dx_prediction_GMLoss_PsyNet.png')
+
+
+def plot_2_set_losses(x, loss_1, loss_2):
+    fig, ax1 = plt.subplots()
+
+    color = 'tab:red'
+    ax1.set_xlabel('time (s)')
+    ax1.set_ylabel('exp', color=color)
+    ax1.plot(t, data1, color=color)
+    ax1.tick_params(axis='y', labelcolor=color)
+
+    ax2 = ax1.twinx()  # instantiate a second axes that shares the same x-axis
+
+    color = 'tab:blue'
+    ax2.set_ylabel('sin', color=color)  # we already handled the x-label with ax1
+    ax2.plot(t, data2, color=color)
+    ax2.tick_params(axis='y', labelcolor=color)
+
+    fig.tight_layout()  # otherwise the right y-label is slightly clipped
+    plt.show()
 
 # We assume a binary classification where Y_true has shape (n_samples,) and Y_pred has shape (n_samples, 2)
 # or (n_samples,)
@@ -214,6 +275,103 @@ def plot_anat_array(data, **kwargs):
     import nibabel
     nii_data = nibabel.Nifti1Image(np.array(data, dtype=np.float32), np.eye(4, dtype=np.float32))
     v = pt.plot_img(nii_data, **kwargs)
+
+
+def plot_3d_data(data, nb_samples=3, channel=None, channel_names=None,
+                 n_slices_per_dim=3, random=True, cmap=None,
+                 saving_path=None, saving_format='png'):
+    """ Plot several samples of 3d data on 3 axis: Sagital (SAG), Coronal (COR) and Axial (AXI)
+
+    Currently supports 3D dataset of the form (samples, channels, dim).
+
+    Parameters
+    ----------
+    data: array (samples, channels, dim)
+        the data to be displayed.
+    nb_samples: int, default 5
+        the number of samples to be displayed.
+    channel: int, default None
+        will select slices with data using the provided channel. If None, selects all the channels
+    channel_names: list of str, default None
+        the channel names to be displayed.
+    n_slices_per_dim: int, default 3
+        selects the nb of slices to show per input dimension
+    random: bool, default True
+        select randomly 'nb_samples' data, otherwise the 'nb_samples' firsts.
+    cmap: plt.cmap object
+    saving_path: str, default None
+        if not None, the path to the saved image
+    """
+    # Check input parameters
+    if data.ndim != 5 :
+        raise ValueError("Unsupported data dimension.")
+
+    (total_samples, nb_channels, *ndims) = data.shape
+    if channel is not None:
+        channels = [channel]
+    else:
+        channels = list(range(nb_channels))
+    
+    if channel_names is not None:
+        assert len(channel_names) == len(channels)
+    else:
+        channel_names = ["ch %i"%i for i in channels]
+
+    if random:
+        indices = np.random.randint(0, total_samples, nb_samples)
+    else:
+        indices = np.range(nb_samples)
+
+    # Get the slice index in each direction (Sagittal, Coronal, Axial)
+    slices = [[int(ndims[dim] * ((s + 1) / (n_slices_per_dim + 1))) for dim in range(3)]
+              for s in range(n_slices_per_dim)]
+    # Now, introduce the ":" slice on each remaining dimension
+    # For instance, if the first dim has the slice index [[32,..], [64,..], [96,..]] then creates
+    # [[32, :, :], [64, :, :], [96, :, :],...]
+    all_slices = np.zeros((3*n_slices_per_dim, 3), dtype=np.object)
+    for s in range(3*n_slices_per_dim):
+        for slicer in range(3):
+            if slicer==(s//n_slices_per_dim):
+                all_slices[s][slicer] = slices[s%n_slices_per_dim][slicer]
+            else:
+                all_slices[s][slicer] = slice(None)
+
+    slices_name = ['SAG', 'COR', 'AXI']
+    slices_name = ['%s \n slice %i'%(slices_name[i], slices[c][i]) for i in range(3) for c in range(n_slices_per_dim)]
+
+    (n_rows, n_cols) = (len(channels)*len(indices), 3*n_slices_per_dim+1) # (+1 for channel name)
+    empty_space_ratio = 1/10 # % of the image size
+
+    fig_width = 2 * n_slices_per_dim
+    fig_height = fig_width * ((n_rows+(nb_samples-1)*empty_space_ratio) * ndims[0])/(n_cols * ndims[1])
+    height_ratios = np.kron(np.ones(nb_samples), list(np.ones(len(channels)))+[empty_space_ratio])[:-1]
+    fig, axes = plt.subplots(n_rows+(nb_samples-1), n_cols, figsize=(fig_width, fig_height), dpi=200, clear=True,
+                             gridspec_kw=dict(wspace=0.0, hspace=0.0, height_ratios=height_ratios))
+
+    for cnt1, ind in enumerate(indices):
+        for cnt2, ch in enumerate(channels):
+            # <nb_channels> rows per sample
+            # This is the index of the current line
+            current_index = np.ravel_multi_index((cnt1, cnt2), (len(indices), len(channels))) + cnt1
+            for col in range(n_cols-1):
+                image = data[ind, ch, all_slices[col][0], all_slices[col][1], all_slices[col][2]]
+                cmap = cmap or "gray"
+                if cnt2 == 0 and cnt1>0: # erase the empty axis ticks and frame
+                    axes[current_index-1, col+1].remove()
+                axes[current_index, col+1].axis("off")
+                if cnt1+cnt2 == 0:
+                    axes[current_index, col+1].set_title(slices_name[col], loc='center', fontsize=6)
+                axes[current_index, col+1].imshow(image, cmap=cmap)
+            # Add the legend for all channels
+            title_ax = axes[current_index, 0]
+            title_ax.axis("off")
+            title_ax.text(0.5, 0.5, '%s (sample %i)'%(channel_names[ch], ind), horizontalalignment='center',
+                          verticalalignment='center', transform=title_ax.transAxes, fontsize=4)
+        if cnt1 > 0:
+            axes[cnt1*(len(channels)+1)-1, 0].remove()
+    plt.show()
+    if saving_path is not None:
+        plt.savefig(saving_path, dpi=200, format=saving_format)
 
 
 def plot_data(data, slice_axis=2, nb_samples=5, channel=0, labels=None,

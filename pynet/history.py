@@ -107,7 +107,7 @@ class History(object):
             if key in self.history[last_step]:
                 msg += "{:6s}:{:10f}  ".format(key, self.history[last_step][key])
         msg += "{}".format(str(self.get_total_time()))
-        print(msg)
+        print(msg, flush=True)
 
     def get_total_time(self):
         """ Returns the total period between the first and last steps.
@@ -127,3 +127,40 @@ class History(object):
     def load(cls, file_name):
         with open(file_name, "rb") as open_file:
             return pickle.load(open_file)
+
+    def to_dict(self, patterns_to_del=None, drop_last=False):
+        import re
+        # Returns a dictionary {k: M} where k is a metric and M is a matrix n x p where n==nb of folds, p==nb of epochs
+        # If one fold is incomplete and drop_last==True, drop it. Otherwise, it won't be matrices but lists of lists.
+        # Optionally, <patterns_to_del> can be a list of regex pattern to delete from the metrics.
+
+        if patterns_to_del is not None:
+            if isinstance(patterns_to_del, str):
+                pattern = re.compile(patterns_to_del)
+            elif isinstance(patterns_to_del, list):
+                pattern = re.compile('({})'.format('|'.join(patterns_to_del)))
+        this_dict = dict()
+        # Constructs the dictionary
+        for step, metrics in self.history.items():
+            for (metric, val) in metrics.items():
+                if metric in self.metrics:
+                    if patterns_to_del is not None:
+                        metric = pattern.sub('', metric)
+                    if metric not in this_dict:
+                        this_dict[metric] = []
+                    if isinstance(step, int):
+                        this_dict[metric].append(val)
+                    elif isinstance(step, tuple):
+                        fold = step[0]
+                        if len(this_dict[metric]) <= fold:
+                            this_dict[metric].extend([[] for _ in range(fold-len(this_dict[metric])+1)])
+                        this_dict[metric][fold].append(val)
+        # Checks the structure
+        length_per_fold = {m: np.array([len(f) for f in this_dict[m]]) for m in this_dict.keys()}
+        if drop_last:
+            for m in length_per_fold:
+                if len(length_per_fold[m]) > 0:
+                    assert np.all(length_per_fold[m][:-1] == length_per_fold[m][0])
+                    if not np.all(length_per_fold[m] == length_per_fold[m][0]):
+                        del this_dict[m][-1]
+        return this_dict

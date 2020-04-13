@@ -113,11 +113,11 @@ class DataManager(object):
             self.outputs = np.load(output_path, mmap_mode='r')
 
         if labels is not None:
-            self.labels = df[labels].values
+            self.labels = df[labels].values.copy()
             self.labels = self.labels.squeeze()
 
         if stratify_label is not None:
-            self.stratify_label = df[stratify_label].values
+            self.stratify_label = df[stratify_label].values.copy()
             # Apply the labels transform here as a mapping to the integer representation of the classes
             for i in mask_indices:
                 label = self.stratify_label[i]
@@ -287,8 +287,8 @@ class DataManager(object):
                     data[key] = ListTensors(input_, features)
                 else:
                     data[key] = torch.stack([torch.as_tensor(getattr(s, key), dtype=torch.float) for s in list_samples], dim=0)
-        # if data["labels"] is not None:
-        #     data["labels"] = data["labels"].type(torch.LongTensor)
+        if data["labels"] is not None:
+            data["labels"] = data["labels"].type(torch.LongTensor)
         return DataItem(**data)
 
     def get_dataloader(self, train=False, validation=False, test=False,
@@ -377,9 +377,11 @@ class DataManager(object):
         df = pd.read_csv(self.metadata_path, sep="\t")
         mask = DataManager.get_mask(df=df, projection_labels=self.projection_labels)
 
-        class_repartition = [0 for _ in range(len(set(self.labels[mask])))] # len == nb of classes
+        labels_mapping = {l: apply_transforms(l, self.labels_transforms) for l in set(self.labels[mask])}
+
+        class_repartition = [0 for _ in range(len(set(labels_mapping.values())))] # len == nb of classes
         for i, label in enumerate(self.labels[mask]):
-            label = apply_transforms(label, self.labels_transforms)
+            label = labels_mapping[label]
             class_repartition[label] += 1
 
         n_classes = len(class_repartition)
@@ -388,11 +390,11 @@ class DataManager(object):
         elif isinstance(N_per_class, list):
             assert len(N_per_class) == n_classes
 
-        missing_samples_per_class = [max(N_per_class[i] - class_repartition[i], 0) for i in range(n_classes)]
-        adding_samples_per_class = [missing_samples_per_class[i]//class_repartition[i] + 1
+        missing_samples_per_class = [N_per_class[i] for i in range(n_classes)]
+        adding_samples_per_class = [(missing_samples_per_class[i]-1)//class_repartition[i] + 1
                                     if missing_samples_per_class[i] > 0 else 0 for i in range(n_classes)]
 
-        len_X_augmented = np.sum(missing_samples_per_class) + np.sum(class_repartition)
+        len_X_augmented = np.sum(missing_samples_per_class)
 
         X_to_dump = np.memmap(output_path, dtype='float32', mode='w+', shape=(len_X_augmented,)+self.inputs[0].shape)
         df_to_dump = np.zeros(shape=(len_X_augmented, len(df.columns)), dtype=object)
@@ -402,10 +404,7 @@ class DataManager(object):
         for i in DataManager.get_indices_from_mask(mask):
             pbar.update()
             sample = self.inputs[i]
-            X_to_dump[count] = sample
-            df_to_dump[count] = df.values[i]
-            count += 1
-            label = apply_transforms(self.labels[i], self.labels_transforms)
+            label = labels_mapping[self.labels[i]]
             if missing_samples_per_class[label] > 0:
                 for j in range(adding_samples_per_class[label]):
                     if missing_samples_per_class[label] > 0:
@@ -418,7 +417,7 @@ class DataManager(object):
                         missing_samples_per_class[label] -= 1
 
         df_to_dump = pd.DataFrame(df_to_dump, columns=df.columns)
-        df_to_dump.to_csv(output_path_df)
+        df_to_dump.to_csv(output_path_df, index=False, sep='\t')
 
 class ArrayDataset(Dataset):
     """ A dataset based on numpy array.

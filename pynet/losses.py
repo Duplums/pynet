@@ -44,6 +44,83 @@ class NCross_Entropy:
             history.log((epoch, it), **{"cross_entropy_%i" % i: l})
 
 
+class LGMLoss(nn.Module):
+    """
+    Refer to paper:
+    Weitao Wan, Yuanyi Zhong,Tianpeng Li, Jiansheng Chen
+    Rethinking Feature Distribution for Loss Functions in Image Classification. CVPR 2018
+    """
+    def __init__(self, num_classes, feat_dim, alpha, means=None, log_covs=None):
+        # alpha in [0, 1], % degree of margin associated to d_k
+        super(LGMLoss, self).__init__()
+        self.feat_dim = feat_dim
+        self.num_classes = num_classes
+        self.alpha = alpha
+
+        # Defines (mu, sigma) that will be optimized during the training
+        if means is not None:
+            self.centers = means
+        else:
+            self.centers = nn.Parameter(torch.randn(num_classes, feat_dim))
+        if log_covs is not None:
+            self.log_covs = log_covs
+        else:
+            self.log_covs = nn.Parameter(torch.zeros(num_classes, feat_dim))
+
+    def forward(self, feat, label):
+        batch_size = feat.shape[0]
+        log_covs = torch.unsqueeze(self.log_covs, dim=0)
+
+
+        covs = torch.exp(log_covs) # 1*c*d
+        tcovs = covs.repeat(batch_size, 1, 1) # n*c*d
+        diff = torch.unsqueeze(feat, dim=1) - torch.unsqueeze(self.centers, dim=0)
+        wdiff = torch.div(diff, tcovs)
+        diff = torch.mul(diff, wdiff)
+        dist = torch.sum(diff, dim=-1) #eq.(13) get (d_k) for all k in [1,K]
+
+
+        y_onehot = torch.FloatTensor(batch_size, self.num_classes)
+        y_onehot.zero_()
+        y_onehot = Variable(y_onehot).cuda()
+        y_onehot.scatter_(1, torch.unsqueeze(label, dim=-1), self.alpha) # set alpha to the true position
+        y_onehot = y_onehot + 1.0
+        margin_dist = torch.mul(dist, y_onehot) # get (1+alpha) * d_k if k is the true label, d_k otherwise
+
+        slog_covs = torch.sum(log_covs, dim=-1)
+        tslog_covs = slog_covs.repeat(batch_size, 1)
+        margin_logits = -0.5*(tslog_covs + margin_dist) #eq.(17)
+        logits = -0.5 * (tslog_covs + dist)
+
+        cdiff = feat - torch.index_select(self.centers, dim=0, index=label.long())
+        cdist = cdiff.pow(2).sum(1).sum(0) / 2.0
+
+        slog_covs = torch.squeeze(slog_covs)
+        reg = 0.5*torch.sum(torch.index_select(slog_covs, dim=0, index=label.long()))
+        likelihood = (1.0/batch_size) * (cdist + reg)
+
+        return logits, margin_logits, likelihood
+
+    @staticmethod
+    def compute_likelihood(center, log_cov, feat):
+        # center: [n_features]; log_cov: [n_features]; feat: [batch_size, n_features]
+        batch_size = feat.shape[0]
+        if batch_size == 0:
+            return torch.tensor(0.0)
+
+        covs = torch.exp(log_cov)  # [n_features]
+        tcovs = covs.repeat(batch_size, 1)  # [batch_size, n_features]
+        diff = feat - torch.unsqueeze(center, dim=0) # [batch_size, n_features]
+        wdiff = torch.div(diff, tcovs)
+        diff = torch.mul(diff, wdiff)
+        dist = 0.5 * torch.sum(diff) # scalar
+
+        reg = 0.5 * torch.sum(log_cov) # scalar
+        likelihood = (1.0 / batch_size) * (dist + reg) # scalar
+
+        return likelihood
+
+
 class SSIM(torch.nn.Module):
     def __init__(self, window_size=11, size_average=True, dim="3d", device="cuda"):
         super(SSIM, self).__init__()
@@ -166,7 +243,7 @@ class MultiTaskLoss:
     def __call__(self, inputs, targets):
         out = 0
         for i, loss in enumerate(self.losses):
-            loss_ = loss(inputs[i], targets[i])
+            loss_ = loss(inputs[:,i], targets[:,i])
             name_loss = "%s component %i" % (type(loss).__name__, i)
             self.last_computed_losses[name_loss] = float(loss_)
             out += self.weights[i] * loss_

@@ -24,8 +24,14 @@ def get_confusion_matrix(y_pred, y):
         y = y.detach().cpu().numpy()
     return confusion_matrix(y, y_pred.detach().cpu().numpy())
 
+def roc_auc(y_pred, y):
+    return roc_auc_score(y, y_pred[:,1].detach().cpu().numpy())
+
 def balanced_accuracy(y_pred, y):
-    y_pred = y_pred.data.max(dim=1)[1] # get the indices of the maximum
+    if len(y_pred.shape) == 1:
+        y_pred = (y_pred > 0)
+    if len(y_pred.shape) == 2:
+        y_pred = y_pred.data.max(dim=1)[1] # get the indices of the maximum
     return balanced_accuracy_score(y.detach().cpu().numpy(), y_pred.detach().cpu().numpy())
 
 # Apply the 3D Sobel filter to an input pytorch tensor
@@ -105,7 +111,7 @@ METRICS = {
     "specificity": specificity,
     "sensitivity": sensitivity,
     "confusion_matrix": get_confusion_matrix,
-    "roc_auc": lambda y_pred, y: roc_auc_score(y, y_pred[:,1].detach().cpu().numpy())
+    "roc_auc": roc_auc
     # cf. scikit doc: " The binary case expects a shape (n_samples,), and the scores
     # must be the scores of the class with the greater label."
 }
