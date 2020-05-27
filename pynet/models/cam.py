@@ -28,6 +28,7 @@ CAM_NETWORKS = {
     "vgg19": "35",
     "densenet201": "norm5",
     "resnet18": "layer4",
+    "resnet34": "layer4",
     "inception_v3": "Mixed_7c",
     "lenet": "conv3"
 }
@@ -77,7 +78,7 @@ def get_cam_network(name, model=None):
         raise ValueError("'{0}' network is not yet supported.".format(name))
     model = model or getattr(models, name)(pretrained=True)
     activation_layer_name = CAM_NETWORKS[name]
-    if name == "resnet18":
+    if name in ["resnet18", "resnet34"]:
         model = nn.Sequential(collections.OrderedDict([
             ("features", nn.Sequential(collections.OrderedDict(
                 list(model.named_children())[:-2]))),

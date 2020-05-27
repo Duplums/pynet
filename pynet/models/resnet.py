@@ -116,16 +116,19 @@ class ResNet(nn.Module):
 
     def __init__(self, block, layers, in_channels=3, num_classes=1000, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None,
-                 norm_layer=None, with_dropout=False, with_grid_attention=False):
+                 norm_layer=None, with_dropout=False, with_grid_attention=False,
+                 return_hidden_layers=False, prediction_bias=True, initial_kernel_size=7):
         super(ResNet, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm3d
         self._norm_layer = norm_layer
 
         self.name = "resnet"
+        self.inputs = None
         self.inplanes = 64
         self.dilation = 1
         self.with_grid_attention = with_grid_attention
+        self.return_hidden_layers = return_hidden_layers
 
         if replace_stride_with_dilation is None:
             # each element in the tuple indicates if we should replace
@@ -136,8 +139,10 @@ class ResNet(nn.Module):
                              "or a 3-element tuple, got {}".format(replace_stride_with_dilation))
         self.groups = groups
         self.base_width = width_per_group
-        self.conv1 = nn.Conv3d(in_channels, self.inplanes, kernel_size=7, stride=2, padding=3,
-                               bias=False)
+        initial_stride = 2 if initial_kernel_size==7 else 1
+        padding = (initial_kernel_size-initial_stride+1)//2
+        self.conv1 = nn.Conv3d(in_channels, self.inplanes, kernel_size=initial_kernel_size, stride=initial_stride,
+                               padding=padding, bias=False)
         self.bn1 = norm_layer(self.inplanes)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool3d(kernel_size=3, stride=2, padding=1)
@@ -166,7 +171,7 @@ class ResNet(nn.Module):
 
             self.fc_ga = nn.Linear(128, num_classes)
         else:
-            self.fc = nn.Linear(channels[-1] * block.expansion, num_classes)
+            self.fc = nn.Linear(channels[-1] * block.expansion, num_classes, bias=prediction_bias)
 
         for m in self.modules():
             if isinstance(m, nn.Conv3d):
@@ -176,7 +181,8 @@ class ResNet(nn.Module):
                 nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.Linear):
                 nn.init.normal_(m.weight, 0, 0.01)
-                nn.init.constant_(m.bias, 0)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
 
         # Zero-initialize the last BN in each residual branch,
         # so that the residual branch starts with zeros, and each residual block behaves like an identity.
@@ -189,7 +195,7 @@ class ResNet(nn.Module):
                     nn.init.constant_(m.bn2.weight, 0)
 
     def get_current_visuals(self):
-        return tensor2im(self.attention_map)
+        return None
 
     def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
         norm_layer = self._norm_layer
@@ -216,29 +222,31 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        self.inputs = x
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
         x = self.maxpool(x)
 
-        x = self.layer1(x)
-        x2 = self.layer2(x)
-        x = self.layer3(x2)
-        x = self.layer4(x)
+        x1 = self.layer1(x)
+        x2 = self.layer2(x1)
+        x3 = self.layer3(x2)
+        x4 = self.layer4(x3)
 
-        x5 = self.avgpool(x)
-        x = torch.flatten(x5, 1)
+        x5 = self.avgpool(x4)
+        x6 = torch.flatten(x5, 1)
         if hasattr(self, 'dropout'):
-            x  = self.dropout(x)
+            x6  = self.dropout(x6)
         if self.with_grid_attention:
             conv_scored, self.attention_map = self.compatibility_score(x2, x5)
             pool_attention = self.avgpool(conv_scored)
             pool_attention = torch.flatten(pool_attention, 1)
-            x = self.fc_ga(pool_attention).squeeze(dim=1)
+            x6 = self.fc_ga(pool_attention).squeeze(dim=1)
         else:
-            x = self.fc(x).squeeze(dim=1)
-
-        return x
+            x6 = self.fc(x6).squeeze(dim=1)
+        if self.return_hidden_layers:
+            return x6, [x, x1, x2, x3, x4, x5]
+        return x6
 
 
 def _resnet(arch, block, layers, pretrained, progress, **kwargs):

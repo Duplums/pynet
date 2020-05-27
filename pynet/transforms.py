@@ -16,7 +16,7 @@ is loaded.
 import collections
 import numpy as np
 from scipy.ndimage import rotate, affine_transform
-
+import torch
 
 class LabelMapping(object):
 
@@ -32,7 +32,7 @@ class LabelMapping(object):
         if label in self.mappings:
             return self.mappings[label]
         else:
-            return float(label)
+            return label
 
 class HardNormalization(object):
     def __init__(self, min=-1.0, max=1.0, eps=1e-8):
@@ -41,12 +41,126 @@ class HardNormalization(object):
         self.eps = eps
 
     def __call__(self, arr):
-        min_arr = np.min(arr)
-        max_arr = np.max(arr)
-        if np.abs(min_arr - max_arr) < self.eps:
-            return np.zeros_like(arr)
+        min_arr = torch.min(arr)
+        max_arr = torch.max(arr)
+        if torch.abs(min_arr - max_arr) < self.eps:
+            return torch.zeros_like(arr)
         return ((self.max-self.min) * arr + (self.min*max_arr - self.max*min_arr))/(max_arr-min_arr)
 
+class RandomFlip(object):
+    def __init__(self, vflip=False, hflip=True, proba=0.5):
+        self.vflip = vflip
+        self.hflip = hflip
+        self.prob = proba
+
+    def __call__(self, arr):
+        if self.vflip and np.random.rand() < self.prob:
+            arr = torch.flip(arr, dims=[2])
+        if self.hflip and np.random.rand() < self.prob:
+            arr = torch.flip(arr, dims=[1])
+        return arr
+
+class RandomPatchInversion(object):
+    def __init__(self, patch_size=10, data_threshold=0):
+        self.data_threshold = data_threshold
+        self.patch_size = patch_size
+
+    def __call__(self, arr, label=None):
+        assert isinstance(arr, torch.Tensor)
+        if label is None:
+            label = int(np.random.rand() < 0.5)
+        assert label in [0, 1], "Unexpected label"
+        if label == 1:
+            # Selects 2 random non-overlapping patch
+            mask = (arr > self.data_threshold)
+            # Get a first random patch inside the mask
+            patch1 = self.get_random_patch(mask)
+            # Get a second one outside the first patch and inside the mask
+            mask[patch1] = False
+            patch2 = self.get_random_patch(mask)
+            arr = arr.copy()
+            data_patch1 = arr[patch1].copy()
+            arr[patch1] = arr[patch2]
+            arr[patch2] = data_patch1
+            print(patch1, patch2)
+        return arr, torch.tensor(label, device=arr.device)
+    
+    def get_random_patch(self, mask):
+        # Warning: we assume the mask is convex
+        possible_indices = mask.nonzero(as_tuple=True)
+        if len(possible_indices[0]) == 0:
+            raise ValueError("Empty mask")
+        index = np.random.randint(len(possible_indices[0]))
+        point = [min(ind[index], mask.shape[i]-self.patch_size) for i, ind in enumerate(possible_indices)]
+        patch = tuple([slice(p, p + self.patch_size) for p in point])
+        return patch
+    
+class Random90_3DRot(object):
+    """Applies a rotation in {0, 90, 180, 270} in each direction and returns a label k in [0..23]"""
+    def __init__(self, authorized_rot=None, axes=None):
+        if authorized_rot is not None:
+            assert set(authorized_rot) <= {0, 90, 180, 270}
+        self.authorized_rot = list(authorized_rot or [0, 90, 180, 270])
+        self.nb_rots = len(self.authorized_rot)
+        self.num_classes = self.nb_rots * 3 * 2 # 3 axes, 2 directions or the nb of faces in a cube
+        self.rot_to_k = {0: 0, 90: 1, 180: 2, 270: 3}
+
+        # The 'front' is the axes (1, 2) here. It is arbitrary.
+        self.authorized_axes = [(1, 2), (1, 3), (2, 3)]
+        self.cube_face_to_back = [(2, (1, 3)), (1, (3, 2)), (1, (3, 1))]
+        self.cube_face_to_front = [(0, (1, 2)), (1, (2, 3)), (1, (1, 3))]
+
+        self.cube_face = None
+        if axes is not None:
+            assert axes in self.authorized_axes, "Axes must be in {}".format(self.authorized_axes)
+            self.num_classes = self.nb_rots
+            self.cube_face = 2 * self.authorized_axes.index(axes)
+
+        # Small test to confirm that everything is ok (i.e the transformation T: label -> T(I) is injective
+        # for any image I)
+        self.test_unicity()
+
+    def __call__(self, arr, label=None):
+        assert len(arr.shape) == 4 and isinstance(arr, torch.Tensor)
+        # Chose a label
+        if label is None:
+            label = np.random.randint(0, self.num_classes)
+        assert label in np.arange(self.num_classes), "Unexpected label"
+        # If the cube's face is already predefined, use it
+        if self.cube_face is not None:
+            cube_face = self.cube_face
+            angle = self.authorized_rot[label]
+        else:
+            # Get the associated angle and cube's face
+            angle_index, cube_face = np.unravel_index(label, (self.nb_rots, 6))
+            angle = self.authorized_rot[angle_index]
+
+        # From the cube's face, deduce the axis and direction
+        (direction, face_axes) = (cube_face%2, self.authorized_axes[cube_face//2])
+
+        # Put the selected face to front or back (front is the axes (0, 1) in 3D, (1, 2) in 4D with the channel)
+        if direction == 0:
+            (k, axes) = self.cube_face_to_front[cube_face//2]
+            arr = torch.rot90(arr, k=k, dims=axes)
+
+        elif direction == 1:
+            (k, axes) = self.cube_face_to_back[cube_face//2]
+            arr = torch.rot90(arr, k=k, dims=axes)
+
+        # Rotate of the chosen angle in the direction selected
+        arr = torch.rot90(arr, k=self.rot_to_k[angle], dims=face_axes)
+        return arr, label
+
+    def test_unicity(self):
+        m = torch.arange(8).reshape((1, 2, 2, 2))
+        list_permutation = []
+        for k in range(self.num_classes):
+            rotated_m, label = self(m, label=k)
+            for m_0 in list_permutation:
+                if rotated_m == m_0:
+                    raise ValueError("Several labels map to the same configuration")
+            list_permutation.append(rotated_m)
+        return list_permutation
 
 class Normalize(object):
     def __init__(self, mean=0.0, std=1.0, eps=1e-8):
@@ -55,7 +169,7 @@ class Normalize(object):
         self.eps=eps
 
     def __call__(self, arr):
-        return self.std * (arr - np.mean(arr))/(np.std(arr) + self.eps) + self.mean
+        return self.std * (arr - torch.mean(arr))/(torch.std(arr.float()) + self.eps) + self.mean
 
 class Crop(object):
     """Crop the given n-dimensional array either at a random location or centered"""
@@ -65,10 +179,10 @@ class Crop(object):
         self.copping_type = type
 
     def __call__(self, arr):
-        assert isinstance(arr, np.ndarray)
+        assert isinstance(arr, torch.Tensor)
         assert type(self.shape) == int or len(self.shape) == len(arr.shape)
 
-        img_shape = arr.shape
+        img_shape = np.array(arr.shape)
         if type(self.shape) == int:
             size = [self.shape for _ in range(len(self.shape))]
         else:
@@ -90,7 +204,7 @@ class GaussianNoise:
         self.std = std
 
     def __call__(self, arr):
-        return arr + np.random.normal(0, self.std, arr.shape)
+        return arr + self.std * torch.randn_like(arr)
 
 class RandomAffineTransform3d:
     def __init__(self, angles, translate):
@@ -111,9 +225,9 @@ class RandomAffineTransform3d:
         self.translate = translate
 
     def __call__(self, arr):
-        assert len(arr.shape) == 4 # == (C, H, W, D)
-        arr_shape = arr.shape
+        assert len(arr.shape) == 4 and isinstance(arr, torch.Tensor) # == (C, H, W, D)
 
+        arr_shape = np.array(arr.shape)
         angles = [np.deg2rad(np.random.random() * (angle_max - angle_min) + angle_min)
                   for (angle_min, angle_max) in self.angles]
         alpha, beta, gamma = angles[0], angles[1], angles[2]
@@ -124,14 +238,13 @@ class RandomAffineTransform3d:
         middle_point = (np.asarray(arr_shape[1:]) - 1) / 2
         offset = middle_point - np.dot(middle_point, R)
 
-        translation = [np.round(np.random.random() * (2*arr.shape[i+1]*t) - arr.shape[i+1]*t)
+        translation = [np.round(np.random.random() * (2*arr_shape[i+1]*t) - arr_shape[i+1]*t)
                        for i,t in enumerate(self.translate)]
-        out = np.zeros(arr.shape, dtype=arr.dtype)
+        out = np.zeros(arr_shape, dtype=arr.dtype)
+        for c in range(arr_shape[0]):
+            affine_transform(arr[c].cpu().numpy(), R.T, offset=offset+translation, output=out[c], mode='nearest')
 
-        for c in range(arr.shape[0]):
-            affine_transform(arr[c], R.T, offset=offset+translation, output=out[c], mode='nearest')
-
-        return out
+        return torch.tensor(out, device=arr.device)
 
 
 if __name__ == '__main__':
@@ -146,6 +259,7 @@ if __name__ == '__main__':
 
 
 class Rotation(object):
+    # TODO: convert it to handle torch tensors
     def __init__(self, angle, axes=(1,2), reshape=True, **kwargs):
         self.angle = angle
         self.axes = axes
@@ -156,6 +270,7 @@ class Rotation(object):
         return rotate(arr, self.angle, axes=self.axes, reshape=self.reshape, **self.rotate_kwargs)
 
 class RandomRotation(object):
+    # TODO: convert it to handle torch tensors
     """ nd generalisation of https://pytorch.org/docs/stable/torchvision/transforms.html section RandomRotation"""
     def __init__(self, angles, axes=(0,2), reshape=True, **kwargs):
         if type(angles) in [int, float]:
@@ -178,26 +293,17 @@ class RandomRotation(object):
 class Padding(object):
     """ A class to pad an image.
     """
-    def __init__(self, shape, nb_channels=1, fill_value=0):
+    def __init__(self, shape, **kwargs):
         """ Initialize the instance.
 
         Parameters
         ----------
         shape: list of int
             the desired shape.
-        nb_channels: int, default 1
-            the number of channels.
-        fill_value: int or list of int, default 0
-            the value used to fill the array, if a list is given, use the
-            specified value on each channel.
+        **kwargs: kwargs given to torch.nn.functional.pad()
         """
         self.shape = shape
-        self.nb_channels = nb_channels
-        self.fill_value = fill_value
-        if self.nb_channels > 1 and not isinstance(self.fill_value, list):
-            self.fill_value = [self.fill_value] * self.nb_channels
-        elif isinstance(self.fill_value, list):
-            assert len(self.fill_value) == self.nb_channels
+        self.kwargs = kwargs
 
     def __call__(self, arr):
         """ Fill an array to fit the desired shape.
@@ -210,19 +316,14 @@ class Padding(object):
         Returns
         -------
         fill_arr: np.array
-            the zero padded array.
+            the padded array.
         """
-        if len(arr.shape) - len(self.shape) == 1:
-            data = []
-            for _arr, _fill_value in zip(arr, self.fill_value):
-                data.append(self._apply_padding(_arr, _fill_value))
-            return np.asarray(data)
-        elif len(arr.shape) - len(self.shape) == 0:
-            return self._apply_padding(arr, self.fill_value)
+        if len(arr.shape) >= len(self.shape):
+            return self._apply_padding(arr)
         else:
             raise ValueError("Wrong input shape specified!")
 
-    def _apply_padding(self, arr, fill_value):
+    def _apply_padding(self, arr):
         """ See Padding.__call__().
         """
         orig_shape = arr.shape
@@ -231,13 +332,12 @@ class Padding(object):
             shape_i = final_i - orig_i
             half_shape_i = shape_i // 2
             if shape_i % 2 == 0:
-                padding.append((half_shape_i, half_shape_i))
+                padding.extend([half_shape_i, half_shape_i])
             else:
-                padding.append((half_shape_i, half_shape_i + 1))
+                padding.extend([half_shape_i, half_shape_i + 1])
         for cnt in range(len(arr.shape) - len(padding)):
-            padding.append((0, 0))
-        fill_arr = np.pad(arr, padding, mode="constant",
-                          constant_values=fill_value)
+            padding.extend([0, 0])
+        fill_arr = torch.nn.functional.pad(arr, padding[::-1], **self.kwargs)
         return fill_arr
 
 

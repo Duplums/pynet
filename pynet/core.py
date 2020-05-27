@@ -39,7 +39,7 @@ class Base(Observable):
     """
     def __init__(self, optimizer_name="Adam", learning_rate=1e-3,
                  loss_name="NLLLoss", metrics=None, use_cuda=False,
-                 pretrained=None, **kwargs):
+                 pretrained=None, load_optimizer=True, **kwargs):
         """ Class instantiation.
 
         Observers will be notified, allowed signals are:
@@ -62,6 +62,8 @@ class Base(Observable):
             wether to use GPU or CPU.
         pretrained: path, default None
             path to the pretrained model or weights.
+        load_optimizer: boolean, default True
+            if pretrained is set, whether to also load the optimizer's weights or not
         kwargs: dict
             specify directly a custom 'model', 'optimizer' or 'loss'. Can also
             be used to set specific optimizer parameters.
@@ -109,15 +111,19 @@ class Base(Observable):
                         print('Model loaded.', flush=True)
                     except BaseException as e:
                         print('Error while loading the model\'s weights: %s' % str(e), flush=True)
-                # if "optimizer" in checkpoint:
-                #     try:
-                #         self.optimizer.load_state_dict(checkpoint["optimizer"])
-                #         for state in self.optimizer.state.values():
-                #             for k, v in state.items():
-                #                 if torch.is_tensor(v):
-                #                     state[k] = v.to(self.device)
-                #     except BaseException as e:
-                #         print('Error while loading the optimizer\'s weights: %s' % str(e))
+                
+                if "optimizer" in checkpoint:
+                    if load_optimizer:
+                        try:
+                            self.optimizer.load_state_dict(checkpoint["optimizer"])
+                            for state in self.optimizer.state.values():
+                                for k, v in state.items():
+                                    if torch.is_tensor(v):
+                                        state[k] = v.to(self.device)
+                        except BaseException as e:
+                            print('Error while loading the optimizer\'s weights: %s' % str(e))
+                    else:
+                        print("Warning: the optimizer's weights are not restored ! ", flush=True)
             else:
                 self.model.load_state_dict(checkpoint)
         self.model = self.model.to(self.device)
@@ -185,7 +191,8 @@ class Base(Observable):
                 train_history.summary()
                 if scheduler is not None:
                     scheduler.step(loss)
-                if checkpointdir is not None and epoch % nb_epochs_per_saving == 0:
+                if checkpointdir is not None and (epoch % nb_epochs_per_saving == 0 or epoch == nb_epochs-1) \
+                        and epoch > 0:
                     checkpoint(
                         model=self.model,
                         epoch=epoch,
@@ -198,13 +205,14 @@ class Base(Observable):
                         epoch=epoch,
                         fold=fold)
                 if with_validation:
-                    _, loss, values = self.test([loader.validation for loader in loaders],
+                    _, _, _, loss, values = self.test([loader.validation for loader in loaders],
                                                 standard_optim=standard_optim)
                     valid_history.log((fold, epoch), validation_loss=loss, **values)
                     valid_history.summary()
                     if valid_visualizer is not None:
                         valid_visualizer.refresh_current_metrics()
-                    if checkpointdir is not None and epoch % nb_epochs_per_saving == 0:
+                    if checkpointdir is not None and (epoch % nb_epochs_per_saving == 0 or epoch == nb_epochs-1) \
+                            and epoch > 0:
                         valid_history.save(
                             outdir=checkpointdir,
                             epoch=epoch,
@@ -232,24 +240,18 @@ class Base(Observable):
 
         self.model.train()
         nb_batch = np.min([len(loader) for loader in loaders])
+        pbar = tqdm(total=nb_batch, desc="Mini-Batch")
 
         values = {}
-        pbar = tqdm(total=nb_batch, desc="Mini-Batch")
-        losses = []
         iteration = 0
-        stop_it = False
         gen = zip(*loaders)
-        while not stop_it:
-            pbar.update()
-            if not standard_optim:
-                stop_it, outputs = self.model(gen)
-                if stop_it:
-                    break
-            else:
-                try:
-                    dataitems = gen.__next__()
-                except StopIteration:
-                    break
+
+        if not standard_optim:
+            loss, values = self.model(gen, pbar=pbar, visualizer=visualizer)
+        else:
+            losses = []
+            for dataitems in gen:
+                pbar.update()
                 inputs = [dataitem.inputs.to(self.device) for dataitem in dataitems]
                 list_targets = []
                 for dataitem in dataitems:
@@ -260,45 +262,38 @@ class Base(Observable):
                     if len(_targets) == 1:
                         _targets = _targets[0]
                     list_targets.append(_targets)
-
+    
                 self.optimizer.zero_grad()
                 outputs = self.model(*inputs)
                 batch_loss = self.loss(outputs, *list_targets)
                 batch_loss.backward()
                 losses.append(float(batch_loss))
                 self.optimizer.step()
-
-                # self.optimizer[1].zero_grad()
-                # outputs = self.model(*inputs, with_disc=True)
-                # batch_loss = self.loss[1](outputs, *list_targets)
-                # batch_loss.backward()
-                # self.optimizer[1].step()
-
-            for name, metric in self.metrics.items():
-                if name not in values:
-                    values[name] = 0
-                values[name] += float(metric(outputs, *list_targets)) / nb_batch
-            for name, aux_loss in (self.model.get_aux_losses() if hasattr(self.model, 'get_aux_losses') else dict()).items():
-                if name not in values:
-                    values[name] = 0
-                values[name] += float(aux_loss) / nb_batch
-            if iteration % 10 == 0:
-                if visualizer is not None:
-                    visualizer.refresh_current_metrics()
-                    if hasattr(self.model, "get_current_visuals"):
-                        visuals = self.model.get_current_visuals()
-                        visualizer.display_images(visuals, ncols=3)
-                    # try:
-                    #     visualizer.visualize_data(*inputs, outputs)
-                    # except Exception as e:
-                    #     print(e)
-                    #     pass
-            iteration += 1
-
+    
+                for name, metric in self.metrics.items():
+                    if name not in values:
+                        values[name] = 0
+                    values[name] += float(metric(outputs, *list_targets)) / nb_batch
+    
+                aux_losses = (self.model.get_aux_losses() if hasattr(self.model, 'get_aux_losses') else dict())
+                aux_losses.update(self.loss.get_aux_losses() if hasattr(self.loss, 'get_aux_losses') else dict())
+    
+                for name, aux_loss in aux_losses.items():
+                    if name not in values:
+                        values[name] = 0
+                    values[name] += float(aux_loss) / nb_batch
+                if iteration % 10 == 0:
+                    if visualizer is not None:
+                        visualizer.refresh_current_metrics()
+                        if hasattr(self.model, "get_current_visuals"):
+                            visuals = self.model.get_current_visuals()
+                            visualizer.display_images(visuals, ncols=3)
+                iteration += 1
+            loss = np.mean(losses)
         if history is not None:
-            history.log((fold, epoch), loss=np.mean(losses), **values)
+            history.log((fold, epoch), loss=loss, **values)
         pbar.close()
-        return np.mean(losses), values
+        return loss, values
 
     def testing(self, managers, with_logit=False, predict=False, with_visuals=False, saving_dir=None, exp_name=None,
                 standard_optim=True):
@@ -332,35 +327,18 @@ class Base(Observable):
 
         loaders = [manager.get_dataloader(test=True) for manager in managers]
         if with_visuals:
-            y, loss, values, visuals = self.test(
+            y, y_true, X, loss, values, visuals = self.test(
                 [loader.test for loader in loaders], with_logit=with_logit, predict=predict, with_visuals=with_visuals,
                 standard_optim=standard_optim)
         else:
-            y, loss, values = self.test(
+            y, y_true, X, loss, values = self.test(
                 [loader.test for loader in loaders], with_logit=with_logit, predict=predict, with_visuals=with_visuals,
                 standard_optim=standard_optim)
-
-        y_true = []
-        X = []
-        targets = OrderedDict()
-        for loader in loaders:
-            for dataitem in loader.test:
-                for cnt, item in enumerate((dataitem.outputs,
-                                            dataitem.labels)):
-                    if item is not None:
-                        targets.setdefault(cnt, []).append(
-                            item)
-                X.append(dataitem.inputs)
-        X = torch.cat(X, dim=0).detach().cpu().numpy()
-        for key, val in targets.items():
-            y_true.append(torch.cat(val, dim=0).detach().cpu().numpy())
-        if len(y_true) == 1:
-            y_true = y_true[0]
 
         if saving_dir is not None:
             with open(os.path.join(saving_dir, (exp_name or 'test')+'.pkl'), 'wb') as f:
                 pickle.dump({'y_pred': y, 'y_true': y_true, 'loss': loss, 'metrics': values}, f)
-
+        
         if with_visuals:
             return y, X, y_true, loss, values, visuals
 
@@ -382,6 +360,10 @@ class Base(Observable):
         -------
         y: array-like
             the predicted data.
+        y_true: array-like
+            the true data
+        X: array_like
+            the input data
         loss: float
             the value of the loss function.
         values: dict
@@ -392,27 +374,19 @@ class Base(Observable):
 
         self.model.eval()
         nb_batch = np.min([len(loader) for loader in loaders])
+        pbar = tqdm(total=nb_batch, desc="Mini-Batch")
         loss = 0
         values = {}
         visuals = []
+
         with torch.no_grad():
-            y = []
+            y, y_true, X = [], [], []
             outputs = None
-            pbar = tqdm(total=nb_batch, desc="Mini-Batch")
-            stop_it = False
             gen = zip(*loaders)
-            while not stop_it:
-                pbar.update()
-                if not standard_optim:
-                    stop_it, outputs = self.model(gen)
-                    if stop_it:
-                        break
-                    y.append(outputs)
-                else:
-                    try:
-                        dataitems = gen.__next__()
-                    except StopIteration:
-                        break
+            if not standard_optim:
+                loss, values, y, y_true, X = self.model(gen, pbar=pbar)
+            else:
+                for dataitems in gen:
                     pbar.update()
                     inputs = [dataitem.inputs.to(self.device) for dataitem in dataitems]
                     list_targets = []
@@ -421,6 +395,7 @@ class Base(Observable):
                         for item in (dataitem.outputs, dataitem.labels):
                             if item is not None:
                                 targets.append(item.to(self.device))
+                                y_true.extend(item.cpu().detach().numpy())
                         if len(targets) == 1:
                             targets = targets[0]
                         elif len(targets) == 0:
@@ -431,36 +406,37 @@ class Base(Observable):
                         outputs = self.model(*inputs)
                         if with_visuals:
                             visuals.append(self.model.get_current_visuals())
-                        y.append(outputs)
                         if len(list_targets) > 0:
                             batch_loss = self.loss(outputs, *list_targets)
                             loss += float(batch_loss) / nb_batch
-                    for name, metric in self.metrics.items():
+
+                    y.extend(outputs.cpu().detach().numpy())
+                    for i in inputs:
+                        X.extend(i.cpu().detach().numpy())
+
+                    aux_losses = (self.model.get_aux_losses() if hasattr(self.model, 'get_aux_losses') else dict())
+                    aux_losses.update(self.loss.get_aux_losses() if hasattr(self.loss, 'get_aux_losses') else dict())
+                    for name, aux_loss in aux_losses.items():
                         name += " on validation set"
                         if name not in values:
                             values[name] = 0
-                        values[name] += metric(outputs, *list_targets) / nb_batch
-
-                for name, aux_loss in (self.model.get_aux_losses() if hasattr(self.model, 'get_aux_losses') else dict()).items():
+                        values[name] += aux_loss / nb_batch
+                        
+                # Now computes the metrics with (y, y_true)
+                for name, metric in self.metrics.items():
                     name += " on validation set"
-                    if name not in values:
-                        values[name] = 0
-                    values[name] += aux_loss / nb_batch
+                    values[name] = metric(torch.tensor(y), torch.tensor(y_true))
             pbar.close()
+            
             if len(visuals) > 0:
                 visuals = np.concatenate(visuals, axis=0)
             try:
-                # if isinstance(outputs, list):
-                #     y = [torch.cat([y[i][j] for i in range(len(y))], 0) for j in range(len(outputs))]
-                # else:
-                y = torch.cat(y, 0)
                 if with_logit:
-                    y = func.softmax(y, dim=1)
-                y = y.detach().cpu().numpy()
+                    y = func.softmax(torch.tensor(y), dim=1).detach().cpu().numpy()
                 if predict:
                     y = np.argmax(y, axis=1)
             except Exception as e:
                 print(e)
         if with_visuals:
-            return y, loss, values, visuals
-        return y, loss, values
+            return y, y_true, X, loss, values, visuals
+        return y, y_true, X, loss, values

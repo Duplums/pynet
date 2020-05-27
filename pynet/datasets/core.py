@@ -20,7 +20,7 @@ from tqdm import tqdm
 import pandas as pd
 from sklearn.model_selection import (
     KFold, StratifiedKFold, ShuffleSplit, StratifiedShuffleSplit)
-
+from sklearn.preprocessing import KBinsDiscretizer
 # Global parameters
 SetItem = namedtuple("SetItem", ["test", "train", "validation"])
 DataItem = namedtuple("DataItem", ["inputs", "outputs", "labels"])
@@ -44,10 +44,11 @@ class DataManager(object):
     """
 
     def __init__(self, input_path, metadata_path, output_path=None, add_to_input=None,
-                 labels=None, stratify_label=None, custom_stratification=None,
-                 projection_labels=None, number_of_folds=10, batch_size=1, sampler=None, in_features_transforms=None,
-                 input_transforms=None, output_transforms=None, labels_transforms=None, stratify_label_transforms=None,
-                 data_augmentation=None, add_input=False, patch_size=None, input_size=None, test_size=0.1,
+                 labels=None, stratify_label=None, categorical_strat_label=True, custom_stratification=None,
+                 N_train_max=None,  projection_labels=None, number_of_folds=10, batch_size=1, sampler=None,
+                 in_features_transforms=None, input_transforms=None, output_transforms=None, labels_transforms=None,
+                 stratify_label_transforms=None, data_augmentation=None, self_supervision=None, add_input=False,
+                 patch_size=None, input_size=None, test_size=0.1, device='cpu',
                  **dataloader_kwargs):
         """ Splits an input numpy array using memory-mapping into three sets:
         test, train and validation. This function can stratify the data.
@@ -73,9 +74,14 @@ class DataManager(object):
         stratify_label: str, default None
             the name of the column in the metadata table containing the label
             used during the stratification.
+        categorical_strat_label: bool, default True
+            is the stratification label a categorical or continuous variable ?
         custom_stratification: dict, default None
             same format as projection labels. It will split the dataset into train/test/val according
             to the stratification defined in the dict.
+        N_train_max: int, default None
+            set the max number of training samples that can be put in the training set. The stratification is made
+            accordingly
         projection_labels: dict, default None
             selects only the data that match the conditions in the dict
             {<column_name>: <value>}.
@@ -90,6 +96,8 @@ class DataManager(object):
             transforms a list of samples with pre-defined transformations.
         data_augmentation: list of callable, default None
             transforms the training dataset input with pre-defined transformations on the fly during the training.
+        self_supervision: a callable, default None
+            applies a transformation to each input and generates a label
         add_input: bool, default False
             if true concatenate the input tensor to the output tensor.
         test_size: float, default 0.1
@@ -113,6 +121,8 @@ class DataManager(object):
             self.outputs = np.load(output_path, mmap_mode='r')
 
         if labels is not None:
+            if self_supervision is not None:
+                raise ValueError("Impossible to set a label if self_supervision is on.")
             self.labels = df[labels].values.copy()
             self.labels = self.labels.squeeze()
 
@@ -124,6 +134,11 @@ class DataManager(object):
                 for tf in (stratify_label_transforms or []):
                     label = tf(label)
                 self.stratify_label[i] = label
+            init_stratify_label_copy = self.stratify_label.copy()
+            # If necessary, discretizes the labels
+            if not categorical_strat_label:
+                self.stratify_label[mask] = DataManager.discretize_continous_label(self.stratify_label[mask],
+                                                                                   verbose=True)
 
         if add_to_input is not None:
             self.features_to_add = np.array([df[f].values for f in add_to_input]).transpose()
@@ -136,6 +151,7 @@ class DataManager(object):
         self.output_transforms = output_transforms or []
         self.labels_transforms = labels_transforms or []
         self.data_augmentation = data_augmentation or []
+        self.self_supervision = self_supervision
         self.add_input = add_input
         self.data_loader_kwargs = dataloader_kwargs
         assert sampler in [None, "weighted_random", "random"], "Unknown sampler: %s" % str(sampler)
@@ -153,11 +169,15 @@ class DataManager(object):
         self.dataset = dict((key, [])
                             for key in ("train", "test", "validation"))
 
+        if N_train_max is not None:
+            assert custom_stratification is not None and \
+                   {"train", "validation", "test"} <= set(custom_stratification.keys())
+
         # 1st step: split into train/test (get only indices)
         dummy_like_X_masked = np.ones(np.sum(mask))
         val_indices, train_indices, test_indices = (None, None, None)
         if custom_stratification is not None:
-            if "validation" in custom_stratification and stratify_label is not None:
+            if "validation" in custom_stratification and stratify_label is not None and N_train_max is None:
                 print("Warning: impossible to stratify the data: validation+test set already defined ! ")
             train_mask, test_mask = (DataManager.get_mask(df, custom_stratification["train"]),
                                      DataManager.get_mask(df, custom_stratification["test"]))
@@ -165,7 +185,8 @@ class DataManager(object):
                 val_mask = DataManager.get_mask(df, custom_stratification["validation"])
                 val_mask &= mask
                 val_indices = DataManager.get_indices_from_mask(val_mask)
-                self.number_of_folds = 1
+                if N_train_max is None:
+                    self.number_of_folds = 1
 
             train_mask &= mask
             test_mask &= mask
@@ -188,6 +209,7 @@ class DataManager(object):
                 train_indices, test_indices = next(splitter.split(dummy_like_X_masked))
                 train_indices = mask_indices[train_indices]
                 test_indices = mask_indices[test_indices]
+
         if self.labels is not None:
             assert len(self.labels) == len(self.inputs)
         self.dataset["test"] = ArrayDataset(
@@ -198,29 +220,46 @@ class DataManager(object):
             input_transforms = self.input_transforms,
             output_transforms = self.output_transforms,
             label_transforms = self.labels_transforms,
-            patch_size=patch_size, input_size=input_size)
+            self_supervision=self.self_supervision,
+            patch_size=patch_size, input_size=input_size,
+            device=device)
 
         if train_indices is None:
             return
 
         # 2nd step: split the training set into K folds (K-1 for training, 1
         # for validation, K times)
+
+        if stratify_label is not None and not categorical_strat_label:
+            # Recomputes the discretization for the training set to get a split train/val with finer statistics
+            # (we do not assume that train+test has the same stats as train in case of custom stratification).
+            self.stratify_label[train_indices] = \
+                DataManager.discretize_continous_label(init_stratify_label_copy[train_indices], verbose=True)
+
         dummy_like_X_train = np.ones(len(train_indices))
         if val_indices is not None:
-            gen = [(train_indices, val_indices)]
-
-        elif stratify_label is not None:
-            kfold_splitter = StratifiedKFold(
-                n_splits=number_of_folds)
-            gen = kfold_splitter.split(
-                dummy_like_X_train,
-                np.array(self.stratify_label[train_indices], dtype=np.int32))
-            gen = [(train_indices[tr], train_indices[val]) for (tr, val) in gen]
+            if N_train_max is not None:
+                Splitter = ShuffleSplit if stratify_label is None else StratifiedShuffleSplit
+                kfold_splitter = Splitter(n_splits=self.number_of_folds,
+                                          train_size=float(N_train_max/len(train_indices)), random_state=0)
+                strat_indices = np.array(self.stratify_label[train_indices], dtype=np.int32) \
+                    if stratify_label is not None else None
+                gen = kfold_splitter.split(dummy_like_X_train, strat_indices)
+                gen = [(train_indices[tr], val_indices) for (tr, _) in gen]
+            else:
+                gen = [(train_indices, val_indices)]
 
         else:
-            kfold_splitter = KFold(n_splits=number_of_folds)
-            gen = kfold_splitter.split(dummy_like_X_train)
-            gen = [(train_indices[tr], train_indices[val]) for (tr, val) in gen]
+            if self.number_of_folds > 1:
+                Splitter = KFold if stratify_label is None else StratifiedKFold
+                kfold_splitter = Splitter(n_splits=self.number_of_folds)
+                strat_indices = np.array(self.stratify_label[train_indices], dtype=np.int32) \
+                    if stratify_label is not None else None
+                gen = kfold_splitter.split(dummy_like_X_train, strat_indices)
+                gen = [(train_indices[tr], train_indices[val]) for (tr, val) in gen]
+            else:
+                gen = [(train_indices, [])]
+
 
         for fold_train_index, fold_val_index in gen:
             assert len(set(fold_val_index) & set(fold_train_index)) == 0
@@ -234,7 +273,9 @@ class DataManager(object):
                 input_transforms=self.input_transforms+self.data_augmentation,
                 output_transforms=self.output_transforms+self.data_augmentation,
                 label_transforms=self.labels_transforms,
-                patch_size=patch_size, input_size=input_size)
+                self_supervision=self.self_supervision,
+                patch_size=patch_size, input_size=input_size,
+                device=device)
             val_dataset = ArrayDataset(
                 self.inputs, fold_val_index,
                 labels=self.labels, outputs=self.outputs,
@@ -244,11 +285,24 @@ class DataManager(object):
                 input_transforms=self.input_transforms,
                 output_transforms=self.output_transforms,
                 label_transforms=self.labels_transforms,
-                patch_size=patch_size, input_size=input_size
+                self_supervision=self.self_supervision,
+                patch_size=patch_size, input_size=input_size,
+                device=device
             )
             self.dataset["train"].append(train_dataset)
             self.dataset["validation"].append(val_dataset)
 
+    @staticmethod
+    def discretize_continous_label(labels, verbose=False):
+        # Get an estimation of the best bin edges. 'Sturges' is conservative for pretty large datasets (N>1000).
+        bin_edges = np.histogram_bin_edges(labels, bins='sturges')
+        if verbose:
+            print('Global histogram:\n', np.histogram(labels, bins=bin_edges, density=False), flush=True)
+        # Discretizes the values according to these bins
+        discretization = np.digitize(labels, bin_edges[1:], right=True)
+        if verbose:
+            print('Bin Counts after discretization:\n', np.bincount(discretization), flush=True)
+        return discretization
 
     @staticmethod
     def get_indices_from_mask(mask):
@@ -288,7 +342,7 @@ class DataManager(object):
                 else:
                     data[key] = torch.stack([torch.as_tensor(getattr(s, key), dtype=torch.float) for s in list_samples], dim=0)
         if data["labels"] is not None:
-            data["labels"] = data["labels"].type(torch.LongTensor)
+            data["labels"] = data["labels"].type(torch.FloatTensor)
         return DataItem(**data)
 
     def get_dataloader(self, train=False, validation=False, test=False,
@@ -425,7 +479,8 @@ class ArrayDataset(Dataset):
     def __init__(self, inputs, indices, labels=None, outputs=None, features_to_add=None,
                  add_input=False, in_features_transforms=None,
                  input_transforms=None, output_transforms=None,
-                 label_transforms=None, patch_size=None, input_size=None):
+                 label_transforms=None, self_supervision=None,
+                 patch_size=None, input_size=None, device='cpu'):
         """ Initialize the class.
 
         Parameters
@@ -441,6 +496,8 @@ class ArrayDataset(Dataset):
         add_input: bool, default False
             if set concatenate the input data to the output (useful with
             auto-encoder).
+        self_supervision: callable, default None
+            if set, the transformation to apply to each input that will generate a label
         patch_size: tuple, default None
             if set, return only patches of the input image
         """
@@ -451,6 +508,7 @@ class ArrayDataset(Dataset):
         self.inputs = inputs
         self.labels = labels
         self.outputs = outputs
+        self.device = device
         self.indices = indices
         self.add_input = add_input
         self.patch_size = patch_size
@@ -464,6 +522,7 @@ class ArrayDataset(Dataset):
         self.input_transforms = input_transforms or []
         self.output_transforms = output_transforms or []
         self.labels_transforms = label_transforms or []
+        self.self_supervision = self_supervision
         self.output_same_as_input = (self.add_input and self.outputs is None)
         if self.add_input and self.outputs is None:
             self.outputs = self.inputs
@@ -494,17 +553,17 @@ class ArrayDataset(Dataset):
                     _outputs = self.output_cached[indx]
                 return DataItem(inputs=_inputs, outputs=_outputs, labels=_labels)
 
-        _inputs = self.inputs[self.indices[item]]
+        _inputs = torch.tensor(self.inputs[self.indices[item]], device=self.device)
         _labels, _outputs = (None, None)
-        if self.labels is not None:
+        if self.labels is not None: # Particular case in which we can deal with strings before transformations...
             _labels = self.labels[self.indices[item]]
         if self.outputs is not None:
             if self.add_input:
-                _outputs = np.concatenate(
-                    (self.outputs[self.indices[item]], _inputs),
-                    axis=concat_axis)
+                _outputs = torch.cat(
+                    (torch.tensor(self.outputs[self.indices[item]], device=self.device), _inputs),
+                    dim=concat_axis)
             else:
-                _outputs = self.outputs[self.indices[item]]
+                _outputs = torch.tensor(self.outputs[self.indices[item]], device=self.device)
 
         # Apply the transformations to the data
         for tf in self.input_transforms:
@@ -515,6 +574,10 @@ class ArrayDataset(Dataset):
         if _labels is not None:
             for tf in self.labels_transforms:
                 _labels = tf(_labels)
+            _labels = torch.tensor(_labels, device=self.device)
+
+        if self.self_supervision is not None:
+            _inputs, _labels = self.self_supervision(_inputs)
 
         # Eventually, get only one patch of the input (and one patch of the corresponding output if add_input==True)
         if self.patch_size is not None:
@@ -524,10 +587,10 @@ class ArrayDataset(Dataset):
             indx = np.unravel_index(offset, np.array(self.input_size) // np.array(self.patch_size))
 
             # Store everything in a cache to avoid useless computations...
-            self.input_cached = view_as_blocks(_inputs, tuple(self.patch_size))
+            self.input_cached = torch.tensor(view_as_blocks(_inputs, tuple(self.patch_size)), device=self.device)
             self.output_cached = _outputs
             if self.output_same_as_input:
-                self.output_cached = view_as_blocks(_outputs, tuple(self.patch_size))
+                self.output_cached = torch.tensor(view_as_blocks(_outputs, tuple(self.patch_size)), device=self.device)
             self.label_cached = _labels
 
             _inputs = self.input_cached[indx]
@@ -536,7 +599,7 @@ class ArrayDataset(Dataset):
 
         # Finally, add the other input features, if any
         if self.features_to_add is not None:
-            _features = self.features_to_add[self.indices[item]]
+            _features = torch.tensor(self.features_to_add[self.indices[item]], device=self.device)
             if self.in_features_transforms is not None:
                 for tf in self.in_features_transforms:
                     _features = tf(_features)

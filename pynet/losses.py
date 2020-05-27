@@ -50,28 +50,22 @@ class LGMLoss(nn.Module):
     Weitao Wan, Yuanyi Zhong,Tianpeng Li, Jiansheng Chen
     Rethinking Feature Distribution for Loss Functions in Image Classification. CVPR 2018
     """
-    def __init__(self, num_classes, feat_dim, alpha, means=None, log_covs=None):
+    def __init__(self, num_classes, feat_dim, alpha, device='cuda'):
         # alpha in [0, 1], % degree of margin associated to d_k
         super(LGMLoss, self).__init__()
         self.feat_dim = feat_dim
         self.num_classes = num_classes
+        self.device = device
         self.alpha = alpha
 
         # Defines (mu, sigma) that will be optimized during the training
-        if means is not None:
-            self.centers = means
-        else:
-            self.centers = nn.Parameter(torch.randn(num_classes, feat_dim))
-        if log_covs is not None:
-            self.log_covs = log_covs
-        else:
-            self.log_covs = nn.Parameter(torch.zeros(num_classes, feat_dim))
+        self.centers = nn.Parameter(torch.zeros((num_classes, feat_dim), device=self.device, requires_grad=True))
+        self.log_covs = nn.Parameter(torch.zeros((num_classes, feat_dim), device=self.device, requires_grad=True))
 
     def forward(self, feat, label):
+        assert feat.device == label.device == self.centers.device
         batch_size = feat.shape[0]
         log_covs = torch.unsqueeze(self.log_covs, dim=0)
-
-
         covs = torch.exp(log_covs) # 1*c*d
         tcovs = covs.repeat(batch_size, 1, 1) # n*c*d
         diff = torch.unsqueeze(feat, dim=1) - torch.unsqueeze(self.centers, dim=0)
@@ -80,10 +74,8 @@ class LGMLoss(nn.Module):
         dist = torch.sum(diff, dim=-1) #eq.(13) get (d_k) for all k in [1,K]
 
 
-        y_onehot = torch.FloatTensor(batch_size, self.num_classes)
-        y_onehot.zero_()
-        y_onehot = Variable(y_onehot).cuda()
-        y_onehot.scatter_(1, torch.unsqueeze(label, dim=-1), self.alpha) # set alpha to the true position
+        y_onehot = torch.zeros((batch_size, self.num_classes), device=self.device)
+        y_onehot.scatter_(1, torch.unsqueeze(label.long(), dim=-1), self.alpha) # set alpha to the true position
         y_onehot = y_onehot + 1.0
         margin_dist = torch.mul(dist, y_onehot) # get (1+alpha) * d_k if k is the true label, d_k otherwise
 

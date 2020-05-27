@@ -78,11 +78,12 @@ class Visualizer:
 
         self.vis.embeddings(features, labels)
 
-    def display_images(self, images, labels=None, ncols=None):
+    def display_images(self, images, labels=None, ncols=None, middle_slices=False):
         """
         :param images: numpy array with shape NxCxHxW(xD) (N=nb of images, C=nb of channels H=height, W=width, D=depth)
         :param labels: list of N label (str)
         :param ncols: int representing how many pictures we're putting on the same row
+        :param middle_slices: bool, whether to cut the image in the middle or not
         """
         if images is None:
             return
@@ -118,13 +119,13 @@ class Visualizer:
 
         # Display the images in one visdom panel
         if D is not None:
-            slice_H = np.argmax(np.sum(np.abs(images), axis=(0,1,3,4)))
+            slice_H = H//2 if middle_slices else np.argmax(np.sum(np.abs(images), axis=(0,1,3,4)))
             self.vis.images(images[:,:,slice_H,:,:], nrow=ncols, win=self.free_display_id,
                             padding=2, opts=dict(title="X-axis cut accross subjects"))
-            slice_W = np.argmax(np.sum(np.abs(images), axis=(0,1,2,4)))
+            slice_W = W//2 if middle_slices else np.argmax(np.sum(np.abs(images), axis=(0,1,2,4)))
             self.vis.images(images[:,:,:,slice_W,:], nrow=ncols, win=self.free_display_id+1,
                             padding=2, opts=dict(title="Y-axis cut accross subjects"))
-            slice_D = np.argmax(np.sum(np.abs(images), axis=(0,1,2,3)))
+            slice_D = D//2 if middle_slices else np.argmax(np.sum(np.abs(images), axis=(0,1,2,3)))
             self.vis.images(images[:,:,:,:,slice_D], nrow=ncols, win=self.free_display_id+2,
                             padding=2, opts=dict(title="Z-axis cut accross subjects"))
         else:

@@ -88,10 +88,15 @@ class GradCam(object):
 
     def __call__(self, input):
         features, output = self.extractor(input)
-        pred_prob = func.softmax(output, dim=1).data.squeeze()
+        if output.shape[1] == 1: # if there is a single scalar, assume prob(y=1) = sigma(y)
+            pseudo_output = torch.cat([torch.zeros(len(output), 1, device=output.device), output], dim=1)
+            pred_prob = func.softmax(pseudo_output, dim=1).data
+            output = torch.cat([-output, output], dim=1)
+        else:
+            pred_prob = func.softmax(output, dim=1).data
         probs, indices = pred_prob.data.max(dim=1)
-        probs = probs.data.numpy()
-        indices = indices.data.numpy()
+        probs = probs.data.detach().cpu().numpy()
+        indices = indices.data.detach().cpu().numpy()
         heatmaps = {}
         for cnt, (prob, index) in enumerate(zip(probs, indices)):
             if cnt == self.top:
@@ -104,7 +109,7 @@ class GradCam(object):
             nb_classes = output.size()[-1]
             one_hot = np.zeros((1, nb_classes), dtype=np.float32)
             one_hot[0][index] = 1
-            one_hot = Variable(torch.from_numpy(one_hot), requires_grad=True)
+            one_hot = torch.tensor(torch.from_numpy(one_hot), requires_grad=True, device=output.device)
             ## Get only Y_c where c == index which is the most probable class for sample i
             one_hot = torch.sum(one_hot * output)
             self.model.features.zero_grad()
