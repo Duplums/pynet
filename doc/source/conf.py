@@ -14,6 +14,23 @@ import subprocess
 from distutils.version import LooseVersion
 import sphinx
 import pysphinxdoc
+from unittest.mock import MagicMock
+
+class Mock(MagicMock):
+    @classmethod
+    def __getattr__(cls, name):
+        return MagicMock(Module=object, VGG=object, ResNet=object,
+                         DenseNet=object, Inception3=object)
+MOCK_MODULES = [
+    'torch', 'torch.nn', 'torch.nn.functional', 'torch.utils',
+    'torch.utils.data', 'torch.autograd', 'torch.nn.modules',
+    'torch.nn.modules.loss',
+    'torchvision', 'torchvision.transforms', 'torchvision.models',
+    'torchviz',
+    'PySide2',
+    'hiddenlayer',
+    'torch.distributions.normal']
+sys.modules.update((mod_name, Mock()) for mod_name in MOCK_MODULES)
 
 installdir = os.path.abspath("../..")
 env = os.environ
@@ -21,7 +38,10 @@ if "PYTHONPATH" in env:
     env["PYTHONPATH"] = env["PYTHONPATH"] + ":" + installdir
 else:
     env["PYTHONPATH"] = installdir
-cmd = ["sphinxdoc", "-v 2", "-p",  installdir, "-n", "pynet", "-o", ".."]
+cmd = ["sphinxdoc", "-v 2", "-p",  installdir, "-n", "pynet", "-o", "..",
+       "-m"] + MOCK_MODULES + ["matplotlib", "matplotlib.pyplot", "-r",
+       "object", "object", "object", "object", "object", "-k", "Module",
+       "VGG", "ResNet", "DenseNet", "Inception3", "-i", "python-network"]
 subprocess.check_call(cmd, env=env)
 sys.path.insert(0, installdir)
 
@@ -32,6 +52,14 @@ if LooseVersion(sphinx.__version__) < LooseVersion("1.8"):
     sphinx_math = "sphinx.ext.pngmath"
 else:
     sphinx_math = "sphinx.ext.imgmath"
+
+def skip(app, what, name, obj, would_skip, options):
+    if name == "__init__":
+        return False
+    return would_skip
+
+def setup(app):
+    app.connect("autodoc-skip-member", skip)
 
 # -- General configuration --------------------------------------------------
 

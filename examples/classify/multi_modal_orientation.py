@@ -1,5 +1,5 @@
 """
-pynet: multi modal slice orientation prediction 
+pynet: multi modal slice orientation prediction
 ===============================================
 
 Credit: A Grigis
@@ -42,7 +42,7 @@ from pynet.datasets import fetch_orientation
 from pynet.datasets import DataManager
 
 data = fetch_orientation(
-    datasetdir="/neurospin/nsap/datasets/orientation",
+    datasetdir="/tmp/orientation",
     flatten=True)
 manager = DataManager(
     input_path=data.input_path,
@@ -51,7 +51,8 @@ manager = DataManager(
     number_of_folds=10,
     batch_size=1000,
     stratify_label="label",
-    test_size=0.1)
+    test_size=0.1,
+    sample_size=(1 if "CI_MODE" not in os.environ else 0.1))
 
 
 #############################################################################
@@ -82,6 +83,7 @@ import torch.nn as nn
 image_size = data.height * data.width
 nb_neurons = 16
 
+
 class OneLayerMLP(nn.Module):
     """  Simple one hidden layer percetron.
     """
@@ -105,20 +107,20 @@ class OneLayerMLP(nn.Module):
             ("softmax", nn.LogSoftmax(dim=1))
         ]))
 
-    def forward(self, x): 
+    def forward(self, x):
         x = self.layers(x)
         return x
- 
+
+
 model = OneLayerMLP(image_size, nb_neurons, 9)
 print(model)
-# plot_net(model, shape=(1, image_size), static=True, outfileroot=None)
 
 #############################################################################
 # Then we configure the parameters of the training step and train the model.
 
-from pynet.classifier import Classifier
+from pynet.interfaces import DeepLearningInterface
 
-cl = Classifier(
+cl = DeepLearningInterface(
     optimizer_name="Adam",
     learning_rate=1e-4,
     loss_name="NLLLoss",
@@ -127,7 +129,7 @@ cl = Classifier(
 test_history, train_history = cl.training(
     manager=manager,
     nb_epochs=10,
-    checkpointdir="/tmp/pynet",
+    checkpointdir="/tmp/orientation",
     fold_index=0,
     with_validation=True)
 
@@ -168,6 +170,7 @@ plot_history(train_history)
 #
 # Now we will create a neural network using convolutional layers.
 
+
 class My_Net(torch.nn.Module):
     def __init__(self):
         super(My_Net, self).__init__()
@@ -176,7 +179,7 @@ class My_Net(torch.nn.Module):
         self.maxpool = torch.nn.MaxPool2d(kernel_size=2)
         self.linear = torch.nn.Linear(16 * 16 * 16, 9)
 
-    def forward(self, X): 
+    def forward(self, X):
         X = X.view(-1, 1, 64, 64)
         X = torch.nn.functional.relu(self.conv1(X))
         X = torch.nn.functional.relu(self.conv2(X))
@@ -186,6 +189,7 @@ class My_Net(torch.nn.Module):
 
 #############################################################################
 # Here, we check how the input size changes through each layer.
+
 
 model = My_Net()
 
@@ -206,7 +210,7 @@ print(X.shape)
 #############################################################################
 # Then we configure the parameters of the training step and train the model.
 
-cl = Classifier(
+cl = DeepLearningInterface(
     optimizer_name="Adam",
     learning_rate=1e-5,
     loss_name="NLLLoss",
@@ -215,7 +219,7 @@ cl = Classifier(
 test_history, train_history = cl.training(
     manager=manager,
     nb_epochs=10,
-    checkpointdir="/tmp/pynet",
+    checkpointdir="/tmp/orientation",
     fold_index=0,
     with_validation=True)
 
@@ -266,6 +270,7 @@ model = OneLayerMLP(image_size, nb_neurons, 9)
 print("Number of parameters in the fully connected: ",
       sum(p.numel() for p in model.parameters()))
 
-
-# import matplotlib.pyplot as plt
-# plt.show()
+import os
+if "CI_MODE" not in os.environ:
+    import matplotlib.pyplot as plt
+    plt.show()

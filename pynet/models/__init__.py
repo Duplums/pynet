@@ -11,4 +11,13 @@
 Module that privides common networks.
 """
 
+
 from .unet import UNet
+from .nvnet import NvNet
+from .voxelmorphnet import VoxelMorphNet
+from .vtnet import VTNet, ADDNet
+from .rcnet import RCNet
+from .brainnetcnn import BrainNetCNN
+from .deeplabnet import DeepLabNet
+from .pspnet import PSPNet
+from .torchvisnet import *

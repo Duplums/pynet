@@ -12,6 +12,7 @@ Common functions to display images.
 """
 
 # Import
+import logging
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -309,7 +310,7 @@ def plot_3d_data(data, nb_samples=3, channel=None, channel_names=None,
         channels = [channel]
     else:
         channels = list(range(nb_channels))
-    
+
     if channel_names is not None:
         assert len(channel_names) == len(channels)
 
@@ -398,8 +399,12 @@ def plot_3d_data(data, nb_samples=3, channel=None, channel_names=None,
 
     plt.show()
 
+# Global parameters
+logger = logging.getLogger("pynet")
+
+
 def plot_data(data, slice_axis=2, nb_samples=5, channel=0, labels=None,
-              random=True, rgb=False, cmap=None):
+              random=True, rgb=False, cmap=None, title=None)
     """ Plot an image associated data.
 
     Currently support 2D or 3D dataset of the form (samples, channels, dim).
@@ -420,6 +425,8 @@ def plot_data(data, slice_axis=2, nb_samples=5, channel=0, labels=None,
         select randomly 'nb_samples' data, otherwise the 'nb_samples' firsts.
     rgb: bool, default False
         if set expect three RGB channels.
+    title: str, default None
+        the figure title.
     """
     # Check input parameters
     if data.ndim not in range(4, 6):
@@ -455,7 +462,8 @@ def plot_data(data, slice_axis=2, nb_samples=5, channel=0, labels=None,
         if len(valid_indices) < nb_samples:
             nb_samples = len(valid_indices)
         indices = range(nb_samples)
-    plt.figure(figsize=(15, 7), dpi=200)
+    fig = plt.figure(figsize=(15, 7), dpi=200)
+    fig.title = title
     for cnt1, ind in enumerate(indices):
         ind = valid_indices[ind]
         for cnt2 in range(nb_channels):
@@ -507,7 +515,7 @@ def plot_segmentation_data(data, mask, slice_axis=2, nb_samples=5):
         mask = np.concatenate(slices, axis=0)
     mask = np.argmax(mask, axis=1)
     valid_indices = [idx for idx in range(len(mask)) if mask[idx].max() > 0]
-    print(mask.shape, len(valid_indices))
+    logger.debug(mask.shape, len(valid_indices))
 
     # Plot data on grid
     indices = np.random.randint(0, len(valid_indices), nb_samples)

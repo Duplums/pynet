@@ -58,7 +58,7 @@ from pynet.datasets import DataManager, fetch_gradcam
 from pynet.plotting import plot_data
 
 data = fetch_gradcam(
-    datasetdir="/neurospin/nsap/datasets/gradcam")
+    datasetdir="/tmp/gradcam")
 manager = DataManager(
     input_path=data.input_path,
     metadata_path=data.metadata_path,
@@ -78,12 +78,13 @@ plot_data(dataset.inputs, nb_samples=5, random=False, rgb=True)
 # We need to reload the data for the inception network.
 # You may need to change the 'datasetdir' parameter.
 
+import os
 from pynet.models.cam import get_cam_network
 from pynet.cam import GradCam
 import matplotlib.pyplot as plt
 
 data = fetch_gradcam(
-    datasetdir="/neurospin/nsap/datasets/gradcam")
+    datasetdir="/tmp/gradcam")
 manager1 = DataManager(
     input_path=data.input_path,
     metadata_path=data.metadata_path,
@@ -92,7 +93,7 @@ manager1 = DataManager(
     test_size=1)
 loaders1 = manager1.get_dataloader(test=True)
 data = fetch_gradcam(
-    datasetdir="/neurospin/nsap/datasets/gradcam",
+    datasetdir="/tmp/gradcam",
     inception=True)
 manager2 = DataManager(
     input_path=data.input_path,
@@ -102,8 +103,10 @@ manager2 = DataManager(
     test_size=1)
 loaders2 = manager2.get_dataloader(test=True)
 
-for loaders, model_name in ((loaders1, "vgg19"), (loaders1, "densenet201"),
-                            (loaders1, "resnet18"), (loaders2, "inception_v3")):
+for loaders, model_name in ((loaders1, "vgg19"),
+                            (loaders1, "densenet201"),
+                            (loaders1, "resnet18"),
+                            (loaders2, "inception_v3")):
 
     heatmaps = []
     print("-" * 10)
@@ -124,4 +127,5 @@ for loaders, model_name in ((loaders1, "vgg19"), (loaders1, "densenet201"),
         axs[1, cnt].imshow(arr_highres, alpha=0.6, cmap="jet")
         axs[1, cnt].set_axis_off()
 
-# plt.show()
+if "CI_MODE" not in os.environ:
+    plt.show()

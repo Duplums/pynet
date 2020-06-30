@@ -36,7 +36,7 @@ print(pynet.configure.info())
 
 from pynet.datasets import DataManager, fetch_cifar
 
-data = fetch_cifar(datasetdir="/neurospin/nsap/datasets/cifar")
+data = fetch_cifar(datasetdir="/tmp/cifar")
 manager = DataManager(
     input_path=data.input_path,
     labels=["label"],
@@ -67,6 +67,7 @@ for trainloader in dataloader.train:
     plot_data(trainloader.inputs, nb_samples=5)
     break
 
-# import matplotlib.pyplot as plt
-# plt.show()
-
+import os
+if "CI_MODE" not in os.environ:
+    import matplotlib.pyplot as plt
+    plt.show()

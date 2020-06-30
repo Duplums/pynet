@@ -40,22 +40,17 @@ SUMMARY = """
     * train a model with metrics feedback.
     * investigate a trained deep network with common vizualization tools.
 """
-long_description = """
-=====
-pynet
-=====
-
-Helper Module for Deep Learning.
-"""
+long_description = (
+    "Helper Module for Deep Learning.\n")
 
 # Main setup parameters
-NAME = "pynet"
+NAME = "python-network"
 ORGANISATION = "CEA"
 MAINTAINER = "Antoine Grigis"
 MAINTAINER_EMAIL = "antoine.grigis@cea.fr"
 DESCRIPTION = description
 LONG_DESCRIPTION = long_description
-URL = "https://github.com/neurospin/pyney"
+URL = "https://github.com/neurospin/pynet"
 DOWNLOAD_URL = "https://github.com/neurospin/pynet"
 LICENSE = "CeCILL-B"
 CLASSIFIERS = CLASSIFIERS
@@ -68,6 +63,7 @@ ISRELEASE = True
 VERSION = __version__
 PROVIDES = ["pynet"]
 REQUIRES = [
+    "torchviz>=0.0.0",
     "numpy>=1.17.1",
     "torch>=1.2.0",
     "torchvision>=0.4.0",
@@ -75,15 +71,19 @@ REQUIRES = [
     "tabulate>=0.8.6",
     "matplotlib>=3.0.3",
     "nibabel>=2.4.0",
-    "tqdm>=4.31.1",
     "progressbar2>=3.39.3",
     "requests>=2.9.1",
     "pandas>=0.24.2",
     "nilearn>=0.5.2",
-    "Pillow>=6.2.1",
+    "Pillow==6.2.1",
     "PySide2>=5.13.2",
     "scikit-learn>=0.21.3",
-    "scikit-image>=0.15.0"
+    "scikit-image==0.15.0",
+    "visdom>=0.1.8.8",
+    "h5py>=2.10.0",
+    "boto3>=1.12.27",
+    "scipy>=0.19.1",
+    "statsmodels>=0.11.1"
 ]
 EXTRA_REQUIRES = {
 }

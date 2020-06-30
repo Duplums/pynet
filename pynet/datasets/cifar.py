@@ -14,6 +14,7 @@ Module that provides functions to prepare the Brats dataset.
 # Imports
 import os
 import json
+import logging
 import torchvision
 import torchvision.transforms as transforms
 from collections import namedtuple
@@ -21,13 +22,16 @@ from collections import OrderedDict
 import numpy as np
 import pandas as pd
 import urllib
+from pynet.datasets import Fetchers
 
 
 # Global parameters
 Item = namedtuple("Item", ["input_path", "output_path", "metadata_path",
                            "labels"])
+logger = logging.getLogger("pynet")
 
 
+@Fetchers.register
 def fetch_cifar(datasetdir):
     """ Fetch/prepare the CIFAR dataset for pynet.
 
@@ -42,6 +46,7 @@ def fetch_cifar(datasetdir):
         a named tuple containing 'input_path', 'output_path', and
         'metadata_path'.
     """
+    logger.info("Loading cifar dataset.")
     classes = ("plane", "car", "bird", "cat", "deer", "dog", "frog", "horse",
                "ship", "truck")
     labels = OrderedDict((key, val) for key, val in enumerate(classes))
@@ -54,11 +59,13 @@ def fetch_cifar(datasetdir):
             transforms.ToTensor(),
             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         ])
+        logger.info("Getting train dataset.")
         trainset = torchvision.datasets.CIFAR10(
             root=datasetdir,
             train=True,
             download=True,
             transform=transform)
+        logger.info("Getting test dataset.")
         testset = torchvision.datasets.CIFAR10(
             root=datasetdir,
             train=False,
@@ -68,6 +75,7 @@ def fetch_cifar(datasetdir):
         data = []
         for loader in (trainset, testset):
             for arr, label in loader:
+                logger.debug("Processing {0} {1}...".format(label, arr.shape))
                 data.append(arr.numpy())
                 metadata["label"].append(label)
                 metadata["category"].append(labels[label][1])

@@ -17,6 +17,8 @@ check the package version.
 """
 
 import pynet
+from pynet.utils import setup_logging
+setup_logging(level="info")
 print(pynet.__version__)
 
 #############################################################################
@@ -33,11 +35,12 @@ print(pynet.configure.info())
 # First load a dataset (the CIFAR10) and a network.
 # You may need to change the 'datasetdir' parameter.
 
+import os
 import torch.nn as nn
 import torch.nn.functional as func
 from pynet.datasets import DataManager, fetch_cifar
 
-data = fetch_cifar(datasetdir="/neurospin/nsap/datasets/cifar")
+data = fetch_cifar(datasetdir="/tmp/cifar")
 manager = DataManager(
     input_path=data.input_path,
     labels=["label"],
@@ -45,7 +48,9 @@ manager = DataManager(
     number_of_folds=10,
     batch_size=10,
     stratify_label="category",
-    test_size=0.1)
+    test_size=0.1,
+    sample_size=(1 if "CI_MODE" not in os.environ else 0.01))
+
 
 class Net(nn.Module):
     def __init__(self):
@@ -56,6 +61,7 @@ class Net(nn.Module):
         self.fc1 = nn.Linear(16 * 5 * 5, 120)
         self.fc2 = nn.Linear(120, 84)
         self.fc3 = nn.Linear(84, 10)
+
     def forward(self, x):
         x = self.pool(func.relu(self.conv1(x)))
         x = self.pool(func.relu(self.conv2(x)))
@@ -64,21 +70,47 @@ class Net(nn.Module):
         x = func.relu(self.fc2(x))
         x = self.fc3(x)
         return x
+
+
 net = Net()
 
 #############################################################################
 # Now start the optimisation.
 
 import torch
-from pynet.classifier import Classifier
+from pynet.interfaces import DeepLearningInterface
 
-cl = Classifier(
+cl = DeepLearningInterface(
+    model=net,
     optimizer_name="SGD",
     momentum=0.9,
     learning_rate=0.001,
     loss_name="CrossEntropyLoss",
-    model=net,
     metrics=["accuracy"])
+if "CI_MODE" not in os.environ:
+    from pynet.plotting import Board
+
+    def update_board(signal):
+        """ Callback to update visdom board visualizer.
+
+        Parameters
+        ----------
+        signal: SignalObject
+            an object with the trained model 'object', the emitted signal
+            'signal', the epoch number 'epoch' and the fold index 'fold'.
+        """
+        net = signal.object.model
+        emitted_signal = signal.signal
+        epoch = signal.epoch
+        fold = signal.fold
+        data = {}
+        for key in signal.keys:
+            if key in ("epoch", "fold"):
+                continue
+            data[key] = getattr(signal, key)
+        board.update_plots(data)
+    board = Board(port=8097, host="http://localhost", env="main")
+    cl.add_observer("after_epoch", update_board)
 test_history, train_history = cl.training(
     manager=manager,
     nb_epochs=3,
@@ -114,5 +146,6 @@ titles = ["{0}-{1}".format(data.labels[it1], data.labels[it2])
           for it1, it2 in zip(y_pred, y_true)]
 plot_data(X, labels=titles, nb_samples=5)
 
-# import matplotlib.pyplot as plt
-# plt.show()
+if "CI_MODE" not in os.environ:
+    import matplotlib.pyplot as plt
+    plt.show()

@@ -20,6 +20,8 @@ jobs:
           name: Install system packages
           command: |
             sudo -E apt-get -yq update
+            sudo apt install -y graphviz
+            sudo apt install -y xdg-utils
       - run:
           name: Install dependencies
           command: |
@@ -34,6 +36,9 @@ jobs:
           name: Running CircleCI tests
           command: |
             . venv/bin/activate
+            pip install torchviz
+            pip install talos
+            pip install joblib
             pip install -e .
             python .circleci/test_script.py
       - store_artifacts:
