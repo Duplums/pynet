@@ -26,6 +26,7 @@ class Alpha_WGAN_Predictors(nn.Module):
 class Alpha_WGAN(nn.Module):
     def __init__(self, latent_dim=1000, lr=0.0002, use_kl=False, device='cuda', path_to_file=None):
         super().__init__()
+        self.std_optim=False
         self.device = device
         self.path_to_file = path_to_file
         self.latent_dim = latent_dim
@@ -84,7 +85,7 @@ class Alpha_WGAN(nn.Module):
         while not stop_it:
             if not self.training:
                 try:
-                    next_dataitem = gen_load.__next__()[0]
+                    next_dataitem = gen_load.__next__()
                     if pbar is not None:
                         pbar.update()
                 except StopIteration:
@@ -152,7 +153,7 @@ class Alpha_WGAN(nn.Module):
                     self.e_optimizer.zero_grad()
                     self.pd_optimizer.zero_grad()
                     try:
-                        next_loading = gen_load.__next__()[0]
+                        next_loading = gen_load.__next__()
                         real_images = next_loading.inputs.to(self.device)
                         targets = next_loading.labels.to(self.device)
                         if pbar is not None:

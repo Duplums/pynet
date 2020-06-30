@@ -128,6 +128,19 @@ class History(object):
         with open(file_name, "rb") as open_file:
             return pickle.load(open_file)
 
+    @classmethod
+    def load_from_dir(cls, outdir, name, fold, epoch):
+        return cls.load(os.path.join(outdir, "{0}_{1}_epoch_{2}.pkl".format(name, fold, epoch)))
+
+    def get_best_epochs(self, metric, highest=True):
+        # Returns a list of n epochs (where n==nb of folds) where each epoch is the best for a given fold according
+        # to a metric. If 'highest' is True, the highest score is the best.
+        # for each fold, get the best epoch according to the selected metric
+        M = self.to_dict(patterns_to_del=['validation_', ' on validation set'])
+        assert metric in list(M.keys()), "Unknown metric %s"%metric
+        best_epochs = np.argmax(M[metric], axis=1) if highest else np.argmin(M[metric], axis=1)
+        return best_epochs
+
     def to_dict(self, patterns_to_del=None, drop_last=False):
         import re
         # Returns a dictionary {k: M} where k is a metric and M is a matrix n x p where n==nb of folds, p==nb of epochs

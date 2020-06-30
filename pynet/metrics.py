@@ -25,7 +25,14 @@ def get_confusion_matrix(y_pred, y):
     return confusion_matrix(y, y_pred.detach().cpu().numpy())
 
 def roc_auc(y_pred, y):
-    return roc_auc_score(y, y_pred[:,1].detach().cpu().numpy())
+    if isinstance(y, torch.Tensor):
+        y = y.detach().cpu().numpy()
+    if len(y_pred.shape) == 2 and y_pred.shape[1] == 2:
+        return roc_auc_score(y, y_pred[:,1].detach().cpu().numpy())
+    elif len(y_pred.shape) < 2:
+        return roc_auc_score(y, y_pred.detach().cpu().numpy())
+    else:
+        raise ValueError('Invalid shape for y_pred: {}'.format(y_pred.shape))
 
 def balanced_accuracy(y_pred, y):
     if len(y_pred.shape) == 1:

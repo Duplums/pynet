@@ -14,6 +14,7 @@ class PsyNet(nn.Module):
     def __init__(self, alpha_wgan, num_classes=2, lr=0.0002, device='cuda',
                  path_to_file=None):
         super().__init__()
+        self.std_optim=False
         self.device = device
         self.latent_dim = alpha_wgan.latent_dim
         self.num_classes = num_classes

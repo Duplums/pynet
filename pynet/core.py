@@ -15,6 +15,7 @@ Core classes.
 import os
 import pickle
 from collections import OrderedDict
+from copy import deepcopy
 
 # Third party import
 from torchvision import models
@@ -79,13 +80,14 @@ class Base(Observable):
         if "model" in kwargs:
             self.model = kwargs.pop("model")
         if self.optimizer is None:
-            if optimizer_name not in dir(torch.optim):
+            if optimizer_name in dir(torch.optim):
+                self.optimizer = getattr(torch.optim, optimizer_name)(
+                    self.model.parameters(),
+                    lr=learning_rate,
+                    **kwargs)
+            else:
                 raise ValueError("Optimizer '{0}' uknown: check available "
                                  "optimizer in 'pytorch.optim'.")
-            self.optimizer = getattr(torch.optim, optimizer_name)(
-                self.model.parameters(),
-                lr=learning_rate,
-                **kwargs)
         if self.loss is None:
             if loss_name not in dir(torch.nn):
                 raise ValueError("Loss '{0}' uknown: check available loss in "
@@ -128,22 +130,22 @@ class Base(Observable):
                 self.model.load_state_dict(checkpoint)
         self.model = self.model.to(self.device)
 
-    def training(self, managers, nb_epochs, checkpointdir=None, fold_index=None,
+    def training(self, manager, nb_epochs, checkpointdir=None, fold_index=None,
                  scheduler=None, with_validation=True, with_visualization=False,
                  nb_epochs_per_saving=1, exp_name=None, standard_optim=True):
         """ Train the model.
 
         Parameters
         ----------
-        managers: a pynet DataManager or a list of DataManagers
+        manager: a pynet DataManager
             a manager containing the train and validation data.
         nb_epochs: int, default 100
             the number of epochs.
         checkpointdir: str, default None
             a destination folder where intermediate models/historues will be
             saved.
-        fold_index: int, default None
-            the index of the fold to use for the training, default use all the
+        fold_index: int or [int] default None
+            the index(es) of the fold(s) to use for the training, default use all the
             available folds.
         scheduler: torch.optim.lr_scheduler, default None
             a scheduler used to reduce the learning rate.
@@ -161,8 +163,6 @@ class Base(Observable):
         train_history, valid_history: History
             the train/validation history.
         """
-        if isinstance(managers, DataManager):
-            managers = [managers]
 
         train_history = History(name="Train_%s"%(exp_name or ""))
         if with_validation is not None:
@@ -176,21 +176,35 @@ class Base(Observable):
                 valid_visualizer = Visualizer(valid_history, offset_win=10)
         print(self.loss)
         print(self.optimizer)
-        folds = range(managers[0].number_of_folds)
+        folds = range(manager.number_of_folds)
         if fold_index is not None:
-            folds = [fold_index]
+            if isinstance(fold_index, int):
+                folds = [fold_index]
+            elif isinstance(fold_index, list):
+                folds = fold_index
+        init_optim_state = deepcopy(self.optimizer.state_dict())
+        init_model_state = deepcopy(self.model.state_dict())
+        if scheduler is not None:
+            init_scheduler_state = deepcopy(scheduler.state_dict())
         for fold in folds:
-            loaders = [manager.get_dataloader(
+            # Initialize everything before optimizing on a new fold
+            self.optimizer.load_state_dict(init_optim_state)
+            self.model.load_state_dict(init_model_state)
+            if scheduler is not None:
+                scheduler.load_state_dict(init_scheduler_state)
+            loader = manager.get_dataloader(
                 train=True,
                 validation=True,
-                fold_index=fold) for manager in managers]
+                fold_index=fold)
             for epoch in range(nb_epochs):
                 self.notify_observers("before_epoch", epoch=epoch, fold=fold)
-                loss, values = self.train([loader.train for loader in loaders], train_history,
+                loss, values = self.train(loader.train, train_history,
                                           train_visualizer, fold, epoch, standard_optim)
                 train_history.summary()
                 if scheduler is not None:
-                    scheduler.step(loss)
+                    scheduler.step()
+                    print('Scheduler lr: {}'.format(scheduler.get_lr()), flush=True)
+                    print('Optimizer lr: %f'%self.optimizer.param_groups[0]['lr'], flush=True)
                 if checkpointdir is not None and (epoch % nb_epochs_per_saving == 0 or epoch == nb_epochs-1) \
                         and epoch > 0:
                     checkpoint(
@@ -205,8 +219,8 @@ class Base(Observable):
                         epoch=epoch,
                         fold=fold)
                 if with_validation:
-                    _, _, _, loss, values = self.test([loader.validation for loader in loaders],
-                                                standard_optim=standard_optim)
+                    _, _, _, loss, values = self.test(loader.validation,
+                                                      standard_optim=standard_optim)
                     valid_history.log((fold, epoch), validation_loss=loss, **values)
                     valid_history.summary()
                     if valid_visualizer is not None:
@@ -218,15 +232,14 @@ class Base(Observable):
                             epoch=epoch,
                             fold=fold)
                 self.notify_observers("after_epoch", epoch=epoch, fold=fold)
-            reset_weights(self.model)
         return train_history, valid_history
 
-    def train(self, loaders, history=None, visualizer=None, fold=None, epoch=None, standard_optim=True):
+    def train(self, loader, history=None, visualizer=None, fold=None, epoch=None, standard_optim=True):
         """ Train the model on the trained data.
 
         Parameters
         ----------
-        loaders: a pytorch Dataloader or a list of Dataloaders
+        loader: a pytorch Dataloader
 
         Returns
         -------
@@ -235,45 +248,41 @@ class Base(Observable):
         values: dict
             the values of the metrics.
         """
-        if isinstance(loaders, DataLoader):
-            loaders = [loaders]
 
         self.model.train()
-        nb_batch = np.min([len(loader) for loader in loaders])
+        nb_batch = len(loader)
         pbar = tqdm(total=nb_batch, desc="Mini-Batch")
 
         values = {}
         iteration = 0
-        gen = zip(*loaders)
 
         if not standard_optim:
-            loss, values = self.model(gen, pbar=pbar, visualizer=visualizer)
+            loss, values = self.model(loader, pbar=pbar, visualizer=visualizer)
         else:
             losses = []
-            for dataitems in gen:
+            y_pred = []
+            y_true = []
+            for dataitem in loader:
                 pbar.update()
-                inputs = [dataitem.inputs.to(self.device) for dataitem in dataitems]
+                inputs = dataitem.inputs.to(self.device)
                 list_targets = []
-                for dataitem in dataitems:
-                    _targets = []
-                    for item in (dataitem.outputs, dataitem.labels):
-                        if item is not None:
-                            _targets.append(item.to(self.device))
-                    if len(_targets) == 1:
-                        _targets = _targets[0]
-                    list_targets.append(_targets)
+                _targets = []
+                for item in (dataitem.outputs, dataitem.labels):
+                    if item is not None:
+                        _targets.append(item.to(self.device))
+                if len(_targets) == 1:
+                    _targets = _targets[0]
+                list_targets.append(_targets)
     
                 self.optimizer.zero_grad()
-                outputs = self.model(*inputs)
+                outputs = self.model(inputs)
                 batch_loss = self.loss(outputs, *list_targets)
                 batch_loss.backward()
-                losses.append(float(batch_loss))
                 self.optimizer.step()
-    
-                for name, metric in self.metrics.items():
-                    if name not in values:
-                        values[name] = 0
-                    values[name] += float(metric(outputs, *list_targets)) / nb_batch
+
+                losses.append(float(batch_loss))
+                y_pred.extend(outputs.detach().cpu().numpy())
+                y_true.extend(list_targets[0].detach().cpu().numpy())
     
                 aux_losses = (self.model.get_aux_losses() if hasattr(self.model, 'get_aux_losses') else dict())
                 aux_losses.update(self.loss.get_aux_losses() if hasattr(self.loss, 'get_aux_losses') else dict())
@@ -290,18 +299,22 @@ class Base(Observable):
                             visualizer.display_images(visuals, ncols=3)
                 iteration += 1
             loss = np.mean(losses)
+            for name, metric in self.metrics.items():
+                if name not in values:
+                    values[name] = 0
+                values[name] = float(metric(torch.tensor(y_pred), torch.tensor(y_true)))
         if history is not None:
             history.log((fold, epoch), loss=loss, **values)
         pbar.close()
         return loss, values
 
-    def testing(self, managers, with_logit=False, predict=False, with_visuals=False, saving_dir=None, exp_name=None,
+    def testing(self, manager, with_logit=False, predict=False, with_visuals=False, saving_dir=None, exp_name=None,
                 standard_optim=True):
         """ Evaluate the model.
 
         Parameters
         ----------
-        manager: a pynet DataManager or a list of pynet DataManagers
+        manager: a pynet DataManager
             a manager containing the test data.
         with_logit: bool, default False
             apply a softmax to the result.
@@ -322,17 +335,15 @@ class Base(Observable):
         values: dict
             the values of the metrics if true data availble.
         """
-        if isinstance(managers, DataManager):
-            managers = [managers]
 
-        loaders = [manager.get_dataloader(test=True) for manager in managers]
+        loader = manager.get_dataloader(test=True)
         if with_visuals:
             y, y_true, X, loss, values, visuals = self.test(
-                [loader.test for loader in loaders], with_logit=with_logit, predict=predict, with_visuals=with_visuals,
+                loader.test, with_logit=with_logit, predict=predict, with_visuals=with_visuals,
                 standard_optim=standard_optim)
         else:
             y, y_true, X, loss, values = self.test(
-                [loader.test for loader in loaders], with_logit=with_logit, predict=predict, with_visuals=with_visuals,
+                loader.test, with_logit=with_logit, predict=predict, with_visuals=with_visuals,
                 standard_optim=standard_optim)
 
         if saving_dir is not None:
@@ -344,13 +355,13 @@ class Base(Observable):
 
         return y, X, y_true, loss, values
 
-    def test(self, loaders, with_logit=False, predict=False, with_visuals=False, standard_optim=True):
+    def test(self, loader, with_logit=False, predict=False, with_visuals=False, standard_optim=True):
         """ Evaluate the model on the test or validation data.
 
         Parameter
         ---------
         loader: a pytorch Dataset
-            the data laoder.
+            the data loader.
         with_logit: bool, default False
             apply a softmax to the result.
         predict: bool, default False
@@ -369,11 +380,9 @@ class Base(Observable):
         values: dict
             the values of the metrics.
         """
-        if isinstance(loaders, DataLoader):
-            loaders = [loaders]
 
         self.model.eval()
-        nb_batch = np.min([len(loader) for loader in loaders])
+        nb_batch = len(loader)
         pbar = tqdm(total=nb_batch, desc="Mini-Batch")
         loss = 0
         values = {}
@@ -381,36 +390,34 @@ class Base(Observable):
 
         with torch.no_grad():
             y, y_true, X = [], [], []
-            outputs = None
-            gen = zip(*loaders)
             if not standard_optim:
-                loss, values, y, y_true, X = self.model(gen, pbar=pbar)
+                loss, values, y, y_true, X = self.model(loader, pbar=pbar)
             else:
-                for dataitems in gen:
+                for dataitem in loader:
                     pbar.update()
-                    inputs = [dataitem.inputs.to(self.device) for dataitem in dataitems]
+                    inputs = dataitem.inputs.to(self.device)
                     list_targets = []
-                    for dataitem in dataitems:
-                        targets = []
-                        for item in (dataitem.outputs, dataitem.labels):
-                            if item is not None:
-                                targets.append(item.to(self.device))
-                                y_true.extend(item.cpu().detach().numpy())
-                        if len(targets) == 1:
-                            targets = targets[0]
-                        elif len(targets) == 0:
-                            targets = None
-                        if targets is not None:
-                            list_targets.append(targets)
+                    targets = []
+                    for item in (dataitem.outputs, dataitem.labels):
+                        if item is not None:
+                            targets.append(item.to(self.device))
+                            y_true.extend(item.cpu().detach().numpy())
+                    if len(targets) == 1:
+                        targets = targets[0]
+                    elif len(targets) == 0:
+                        targets = None
+                    if targets is not None:
+                        list_targets.append(targets)
 
-                        outputs = self.model(*inputs)
-                        if with_visuals:
-                            visuals.append(self.model.get_current_visuals())
-                        if len(list_targets) > 0:
-                            batch_loss = self.loss(outputs, *list_targets)
-                            loss += float(batch_loss) / nb_batch
+                    outputs = self.model(inputs)
+                    if with_visuals:
+                        visuals.append(self.model.get_current_visuals())
+                    if len(list_targets) > 0:
+                        batch_loss = self.loss(outputs, *list_targets)
+                        loss += float(batch_loss) / nb_batch
 
                     y.extend(outputs.cpu().detach().numpy())
+
                     for i in inputs:
                         X.extend(i.cpu().detach().numpy())
 
@@ -440,3 +447,53 @@ class Base(Observable):
         if with_visuals:
             return y, y_true, X, loss, values, visuals
         return y, y_true, X, loss, values
+
+    def MC_test(self, loader,  MC=50):
+        """ Evaluate the model on the test or validation data by using a Monte-Carlo sampling.
+
+        Parameter
+        ---------
+        loader: a pytorch Dataset
+            the data loader.
+        MC: int, default 50
+            nb of times to perform a feed-forward per input
+
+        Returns
+        -------
+        y: array-like dims (n_samples, MC, ...) where ... is the dims of the network's output
+            the predicted data.
+        y_true: array-like dims (n_samples, MC, ...) where ... is the dims of the network's output
+            the true data
+        """
+        self.model.eval()
+        nb_batch = len(loader)
+        pbar = tqdm(total=nb_batch, desc="Mini-Batch")
+
+        with torch.no_grad():
+            y, y_true = [], []
+            outputs = None
+            for dataitem in loader:
+                pbar.update()
+                inputs = dataitem.inputs.to(self.device)
+                list_targets = []
+                current_y, current_y_true = [], []
+                for _ in range(MC):
+                    targets = []
+                    for item in (dataitem.outputs, dataitem.labels):
+                        if item is not None:
+                            targets.append(item.to(self.device))
+                            current_y_true.append(item.cpu().detach().numpy())
+                    if len(targets) == 1:
+                        targets = targets[0]
+                    elif len(targets) == 0:
+                        targets = None
+                    if targets is not None:
+                        list_targets.append(targets)
+
+                    outputs = self.model(inputs)
+                    current_y.append(outputs.cpu().detach().numpy())
+                y.extend(np.array(current_y).swapaxes(0, 1))
+                y_true.extend(np.array(current_y_true).swapaxes(0, 1))
+        pbar.close()
+
+        return y, y_true

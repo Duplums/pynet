@@ -17,7 +17,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib.colors as colors
-
+from sklearn.manifold import TSNE
 from skimage.transform import resize
 from sklearn.decomposition import PCA
 import nilearn
@@ -84,16 +84,18 @@ def age_discrimination(X, y, age_max_down, age_min_up):
         np.min(y), age_max_down, len(X[y < age_max_down]), age_min_up, np.max(y), len(X[y > age_min_up])))
     plt.show()
 
-
-
-def plot_pca(X, labels=None, cmap=plt.cm.plasma, title=None):
+def plot_data_reduced(X, labels=None, reduction='pca', cmap=plt.cm.plasma, title=None):
     # Assume that X has dimension (n_samples, ...) and labels is a list of n_samples labels
     # associated to X
-    pca = PCA(n_components=2)
-    # Do the SVD
-    pca.fit(X.reshape(len(X), -1))
-    # Apply the reduction
-    PC = pca.transform(X.reshape(len(X), -1))
+    assert reduction in ['pca', 't_sne'], "Reduction method not implemented yet"
+    if reduction == 'pca':
+        pca = PCA(n_components=2)
+        # Do the SVD
+        pca.fit(X.reshape(len(X), -1))
+        # Apply the reduction
+        PC = pca.transform(X.reshape(len(X), -1))
+    else:
+        PC = TSNE(n_components=2).fit_transform(X.reshape(len(X), -1))
     fig, ax = plt.subplots(figsize=(20, 30))
     # Color each point according to its label
     if labels is not None:
@@ -103,8 +105,9 @@ def plot_pca(X, labels=None, cmap=plt.cm.plasma, title=None):
             plt.scatter(PC[:,0][labels == l], PC[:,1][labels == l], c=[label_mapping[l]], label=l)
     else:
         plt.scatter(PC[:,0], PC[:,1], alpha=0.8)
-    plt.xlabel("PC1 (var=%.2f)" % pca.explained_variance_ratio_[0])
-    plt.ylabel("PC2 (var=%.2f)" % pca.explained_variance_ratio_[1])
+    if reduction == 'pca':
+        plt.xlabel("PC1 (var=%.2f)" % pca.explained_variance_ratio_[0])
+        plt.ylabel("PC2 (var=%.2f)" % pca.explained_variance_ratio_[1])
     plt.legend()
     if title:
         plt.title(title)
@@ -113,7 +116,7 @@ def plot_pca(X, labels=None, cmap=plt.cm.plasma, title=None):
 
 def plot_losses(train_history, val_history=None, patterns_to_del=None,
                 metrics=None, experiment_names=None, titles=None, ylabels=None,
-                saving_path=None, output_format="png", ylim=None, **kwargs):
+                saving_path=None, output_format="png", ylim=None, same_plot=False, **kwargs):
     """
     :param train_history: History object or list of History objects
         a history from a training process including several metrics
@@ -127,6 +130,8 @@ def plot_losses(train_history, val_history=None, patterns_to_del=None,
         a mapping between a metric and the corresponding plot title
     :param ylabels: dict
         a mapping between a metric and the corresponding y-axis title
+    :param same_plot: bool
+        if True, plots all the metrics in the same figure
     :param saving_path: str
         the path where the the plot will be saved
     :param output_format: str ('png', 'jpg', 'pdf'...)
@@ -152,43 +157,66 @@ def plot_losses(train_history, val_history=None, patterns_to_del=None,
         _metrics = [m for m in metrics if m in _metrics]
     else:
         metrics = _metrics
-    fig, axes = plt.subplots(len(_metrics), 1, squeeze=False, **kwargs)
 
-    for ax_indice, metric in enumerate(metrics):
+    n_rows = int(np.floor(np.sqrt(len(list_dict_training))))
+    n_cols = int(np.ceil(np.sqrt(len(list_dict_training))))
+    if n_rows * n_cols < len(list_dict_training):
+        n_rows = n_cols
+
+
+    if same_plot:
+        fig, axes = plt.subplots(n_rows, n_cols, squeeze=False, **kwargs)
+
+    for metric in metrics:
+        if not same_plot:
+            fig, axes = plt.subplots(n_rows, n_cols, squeeze=False, **kwargs)
         for (i, dict_train) in enumerate(list_dict_training):
+            (row, col) = (i%n_rows, i//n_rows)
             Y_train = dict_train[metric]
             Y_val = list_dict_val[i][metric] if (list_dict_val is not None and metric in list_dict_val[i]) else None
             X = list(range(len(Y_train[0])))
-            exp_name = experiment_names[i] +' (training)' if experiment_names is not None else 'Training'
-            p = axes[ax_indice,0].plot(X, np.quantile(Y_train, 0.5, axis=0), label=exp_name)
-            axes[ax_indice,0].fill_between(X, np.quantile(Y_train, 0.25, axis=0),
+
+            if same_plot:
+                exp_name = (ylabels.get(metric) or '') + ' (training)' if ylabels is not None else 'Training'
+            else:
+                exp_name = experiment_names[i] +' (training)' if experiment_names is not None else 'Training'
+            p = axes[row, col].plot(X, np.quantile(Y_train, 0.5, axis=0), label=exp_name)
+            axes[row, col].fill_between(X, np.quantile(Y_train, 0.25, axis=0),
                                          np.quantile(Y_train, 0.75, axis=0), facecolor=p[0].get_color(),
                                          alpha=0.3)
             if Y_val is not None:
-                exp_name = experiment_names[i] + ' (val)' if experiment_names is not None else 'Validation'
-                p = axes[ax_indice,0].plot(X, np.quantile(Y_val, 0.5, axis=0), label=exp_name)
-                axes[ax_indice,0].fill_between(X, np.quantile(Y_val, 0.25, axis=0),
+                if same_plot:
+                    exp_name = (ylabels.get(metric) or '') + ' (validation)' if ylabels is not None else 'Validation'
+                else:
+                    exp_name = experiment_names[i] + ' (val)' if experiment_names is not None else 'Validation'
+                p = axes[row, col].plot(X, np.quantile(Y_val, 0.5, axis=0), label=exp_name)
+                axes[row, col].fill_between(X, np.quantile(Y_val, 0.25, axis=0),
                                              np.quantile(Y_val, 0.75, axis=0), facecolor=p[0].get_color(), alpha=0.3)
-    
-            axes[ax_indice,0].set_xlabel("Epochs")
-            axes[ax_indice,0].set_ylabel((ylabels or dict()).get(metric) or metric)
-            axes[ax_indice,0].set_title("\n\n"+((titles or dict()).get(metric) or metric))
-            axes[ax_indice,0].legend(loc='upper left')
+
+            axes[row, col].set_xlabel("Epochs")
+            if not same_plot:
+                axes[row, col].set_ylabel((ylabels or dict()).get(metric) or metric)
+            axes[row, col].legend(loc='lower right')
+            if experiment_names is not None:
+                axes[row, col].set_title(experiment_names[i], fontsize=12)
+            axes[row, col].grid()
             if ylim is not None:
                 if isinstance(ylim, list):
-                    axes[ax_indice,0].set_ylim(ylim)
+                    axes[row, col].set_ylim(ylim)
                 elif isinstance(ylim, dict):
                     try:
-                        axes[ax_indice,0].set_ylim(ylim[metric])
+                        axes[row, col].set_ylim(ylim[metric])
                     except KeyError:
                         pass
-            axes[ax_indice,0].grid()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.show()
-
-    if saving_path:
+            axes[row, col].grid()
+        if titles is not None and metric in titles:
+            fig.suptitle(titles[metric], fontsize=14)
+        plt.tight_layout()
+        if saving_path and not same_plot:
+            plt.savefig(saving_path+'_'+metric, format=output_format)
+    if saving_path and same_plot:
         plt.savefig(saving_path, format=output_format)
+    plt.show()
 
 # We assume a binary classification where Y_true has shape (n_samples,) and Y_pred has shape (n_samples, 2)
 # or (n_samples,)
@@ -213,7 +241,7 @@ def roc_curve_plot(Y_pred, Y_true, title=None):
     plt.show()
 
 
-def linear_reg_plots(Y_pred, Y_true, labels=None, cmap=plt.cm.plasma):
+def linear_reg_plots(Y_pred, Y_true, labels=None, cmap=plt.cm.plasma, axes=None, title=''):
     from sklearn.linear_model import LinearRegression
     from scipy.stats import pearsonr
 
@@ -222,21 +250,23 @@ def linear_reg_plots(Y_pred, Y_true, labels=None, cmap=plt.cm.plasma):
     (r, pval) = pearsonr(Y_pred.flatten(), Y_true.flatten())
     MAE = np.mean(np.abs(Y_pred - Y_true))
     RMSE = np.sqrt(np.mean(np.abs(Y_pred-Y_true)**2))
-
+    if axes is None:
+        fig, axes = plt.subplots()
     if labels is not None:
         label_mapping = {l: cmap(int(i*float(cmap.N-1)/len(set(labels)))) for (i,l) in enumerate(set(labels))}
         for l in label_mapping:
-            plt.scatter(Y_true[labels==l], Y_pred[labels==l], c=[label_mapping[l]], label=l)
+            axes.scatter(Y_true[labels==l], Y_pred[labels==l], c=[label_mapping[l]], label=l)
     else:
-        plt.scatter(Y_true, Y_pred)
+        axes.scatter(Y_true, Y_pred)
 
-    plt.plot(Y_true, Y_true, color='red', label='Perfect case')
-    plt.plot(Y_true, [coefs[0]*y[0]+intercepts[0] for y in Y_true], color='green', label='Linear Regression')
-    plt.legend()
-    plt.xlabel('True age')
-    plt.ylabel('Predicted age')
-    plt.title('Linear regression: $R^2={R2:.2f}$, $r={r:.2f}$ (p-value {pval:1.2e} for $H_0$=not correlate),\n'
-              'MAE={mae:.2f}, RMSE={rmse:.2f}'.format(R2=reg.score(Y_true, Y_pred), r=r, pval=pval, mae=MAE, rmse=RMSE))
+    axes.plot(Y_true, Y_true, color='red', label='Perfect case')
+    axes.plot(Y_true, [coefs[0]*y[0]+intercepts[0] for y in Y_true], color='green',
+              label='Linear Regression\n($R^2={R2:.2f}$, $r={r:.2f}$, p-value={pval:1.2e})'.
+              format(R2=reg.score(Y_true, Y_pred), r=r, pval=pval))
+    axes.legend(loc='upper left')
+    axes.set_xlabel('True age (years)')
+    axes.set_ylabel('Predicted age')
+    axes.set_title(title+'\nMAE={mae:.2f}, RMSE={rmse:.2f}'.format(mae=MAE, rmse=RMSE))
     plt.show()
 
 

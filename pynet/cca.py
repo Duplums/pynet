@@ -12,9 +12,19 @@ __all__ = ["svcca_distance", "pwcca_distance", "CCAHook"]
 
 _device = "cuda" if torch.cuda.is_available() else "cpu"
 
+# Workaround a known torch bug...
+def svd(tensor, *args, **kwargs):
+    try:
+        res = torch.svd(tensor, *args, **kwargs)
+        res = (res.U, res.S, res.V)
+    except RuntimeError:
+        res = torch.svd(tensor.T, *args, **kwargs)
+        res = (res.V, res.S, res.U)
+    return res
+
 
 def svd_reduction(tensor: torch.Tensor, accept_rate=0.99):
-    left, diag, right = torch.svd(tensor)
+    left, diag, right = svd(tensor)
     full = diag.abs().sum()
     ratio = diag.abs().cumsum(dim=0) / full
     num = torch.where(ratio < accept_rate,
@@ -29,11 +39,11 @@ def zero_mean(tensor: torch.Tensor, dim):
 
 
 def _svd_cca(x, y):
-    u_1, s_1, v_1 = x.svd()
-    u_2, s_2, v_2 = y.svd()
+    u_1, s_1, v_1 = svd(x)
+    u_2, s_2, v_2 = svd(y)
     uu = u_1.t() @ u_2
     try:
-        u, diag, v = (uu).svd()
+        u, diag, v = svd(uu)
     except RuntimeError as e:
         raise e
     a = v_1 @ s_1.reciprocal().diag() @ u
@@ -59,18 +69,19 @@ def _cca(x, y, method):
     return _svd_cca(x, y)
 
 
-def svcca_distance(x, y, method="svd"):
+def svcca_distance(x, y, method="svd", accept_rate=0.99):
     """
     SVCCA distance proposed in Raghu et al. 2017
     :param x: data matrix [data, neurons]
     :param y: data matrix [data, neurons]
     :param method: computational method "svd" (default) or "qr"
     """
-    x = svd_reduction(x)
-    y = svd_reduction(y)
+    x = svd_reduction(x, accept_rate=accept_rate)
+    y = svd_reduction(y, accept_rate=accept_rate)
     div = min(x.size(1), y.size(1))
     a, b, diag = _cca(x, y, method=method)
-    return 1 - diag.sum() / div
+    res = dict(distance=(1 - diag.sum() / div).item(), cca_coefs=diag.cpu().numpy())
+    return res
 
 
 def pwcca_distance(x, y, method="svd"):
@@ -101,7 +112,7 @@ class CCAHook(object):
     :param svd_device:
     """
 
-    _supported_modules = (nn.Conv2d, nn.Linear)
+    _supported_modules = (nn.Conv3d, nn.Linear)
     _cca_distance_function = {"svcca": svcca_distance,
                               "pwcca": pwcca_distance}
 
@@ -158,9 +169,9 @@ class CCAHook(object):
         tensor1 = tensor1.to(self._svd_device)
         tensor2 = tensor2.to(self._svd_device)
         if isinstance(self._module, nn.Linear):
-            return self._cca_distance(tensor1, tensor2).item()
-        elif isinstance(self._module, nn.Conv2d):
-            return CCAHook._conv2d(tensor1, tensor2, self._cca_distance, size).item()
+            return self._cca_distance(tensor1, tensor2)
+        elif isinstance(self._module, nn.Conv3d):
+            return CCAHook._conv3d(tensor1, tensor2, self._cca_distance, size)
 
     def _register_hook(self):
 
@@ -175,23 +186,25 @@ class CCAHook(object):
         return self._hooked_value
 
     @staticmethod
-    def _conv2d_reshape(tensor, size):
-        b, c, h, w = tensor.shape
+    def _conv3d_reshape(tensor, size):
+        b, c, h, w, d = tensor.shape
         if size is not None:
-            if (size, size) > (h, w):
-                raise RuntimeError(f"`size` should be smaller than the tensor's size but ({h}, {w})")
-            tensor = F.adaptive_avg_pool2d(tensor, size)
-        tensor = tensor.reshape(b, c, -1).permute(2, 0, 1)
+            if (size, size, size) > (h, w, d):
+                raise RuntimeError(f"`size` should be smaller than the tensor's size but ({h}, {w}, {d})")
+            else:
+                tensor = F.adaptive_avg_pool3d(tensor, size)
+        tensor = tensor.permute(0,2,3,4,1).reshape(-1, c) # size (HWDN) x C
         return tensor
 
     @staticmethod
-    def _conv2d(tensor1, tensor2, cca_function, size):
+    def _conv3d(tensor1, tensor2, cca_function, size, **kwargs):
         if tensor1.shape != tensor2.shape:
             raise RuntimeError("tensors' shapes are incompatible!")
-        tensor1 = CCAHook._conv2d_reshape(tensor1, size)
-        tensor2 = CCAHook._conv2d_reshape(tensor2, size)
-        return torch.Tensor([cca_function(t1, t2)
-                             for t1, t2 in zip(tensor1, tensor2)]).mean()
+        tensor1 = CCAHook._conv3d_reshape(tensor1, size)
+        tensor2 = CCAHook._conv3d_reshape(tensor2, size)
+        print("CCA computations between tensor 1 ({}) and tensor 2 ({})".format(tensor1.shape, tensor2.shape),
+              flush=True)
+        return cca_function(tensor1, tensor2, **kwargs)
 
     @staticmethod
     def data(dataset: Dataset, batch_size: int, *, num_workers: int = 2):

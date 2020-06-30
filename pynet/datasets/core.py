@@ -171,7 +171,7 @@ class DataManager(object):
 
         if N_train_max is not None:
             assert custom_stratification is not None and \
-                   {"train", "validation", "test"} <= set(custom_stratification.keys())
+                   {"train", "test"} <= set(custom_stratification.keys())
 
         # 1st step: split into train/test (get only indices)
         dummy_like_X_masked = np.ones(np.sum(mask))
@@ -237,18 +237,20 @@ class DataManager(object):
                 DataManager.discretize_continous_label(init_stratify_label_copy[train_indices], verbose=True)
 
         dummy_like_X_train = np.ones(len(train_indices))
-        if val_indices is not None:
-            if N_train_max is not None:
-                Splitter = ShuffleSplit if stratify_label is None else StratifiedShuffleSplit
-                kfold_splitter = Splitter(n_splits=self.number_of_folds,
-                                          train_size=float(N_train_max/len(train_indices)), random_state=0)
-                strat_indices = np.array(self.stratify_label[train_indices], dtype=np.int32) \
-                    if stratify_label is not None else None
-                gen = kfold_splitter.split(dummy_like_X_train, strat_indices)
+
+        if N_train_max is not None:
+            Splitter = ShuffleSplit if stratify_label is None else StratifiedShuffleSplit
+            kfold_splitter = Splitter(n_splits=self.number_of_folds,
+                                      train_size=float(N_train_max/len(train_indices)), random_state=0)
+            strat_indices = np.array(self.stratify_label[train_indices], dtype=np.int32) \
+                if stratify_label is not None else None
+            gen = kfold_splitter.split(dummy_like_X_train, strat_indices)
+            if val_indices is not None:
                 gen = [(train_indices[tr], val_indices) for (tr, _) in gen]
             else:
-                gen = [(train_indices, val_indices)]
-
+                gen = [(train_indices[tr], train_indices[val]) for (tr, val) in gen]
+        elif val_indices is not None:
+            gen = [(train_indices, val_indices)]
         else:
             if self.number_of_folds > 1:
                 Splitter = KFold if stratify_label is None else StratifiedKFold
@@ -343,6 +345,7 @@ class DataManager(object):
                     data[key] = torch.stack([torch.as_tensor(getattr(s, key), dtype=torch.float) for s in list_samples], dim=0)
         if data["labels"] is not None:
             data["labels"] = data["labels"].type(torch.FloatTensor)
+        print("Labels repartition: {}".format(np.unique(data["labels"].detach().cpu().numpy(), return_counts=True)[1]), flush=True)
         return DataItem(**data)
 
     def get_dataloader(self, train=False, validation=False, test=False,

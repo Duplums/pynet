@@ -1,10 +1,11 @@
 import torch.nn as nn
 import numpy as np
 import torch
+from pynet.models.layers.dropout import SpatialConcreteDropout
 
 class ColeNet(nn.Module):
 
-    def __init__(self, num_classes, input_size):
+    def __init__(self, num_classes, input_size, concrete_dropout=False):
         super().__init__()
         # input_size == (C, H, W, D)
         self.down = []
@@ -14,9 +15,9 @@ class ColeNet(nn.Module):
         channels = [8, 16, 32, 64, 128]
         for i, c in enumerate(channels):
             if i == 0:
-                self.down.append(ConvBlock(self.input_size[0], c))
+                self.down.append(ConvBlock(self.input_size[0], c, concrete_dropout=concrete_dropout))
             else:
-                self.down.append(ConvBlock(channels[i-1], c))
+                self.down.append(ConvBlock(channels[i-1], c, concrete_dropout=concrete_dropout))
 
         self.down = nn.ModuleList(self.down)
         self.classifier = Classifier(channels[-1] * np.prod(np.array(self.input_size[1:])//2**len(channels)), num_classes)
@@ -44,15 +45,17 @@ class ColeNet(nn.Module):
             x = m(x)
         x = torch.flatten(x, 1)
         x = self.classifier(x)
-        return torch.squeeze(x)
+        return x.squeeze(dim=1)
 
 class ConvBlock(nn.Module):
 
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, concrete_dropout=False):
         super().__init__()
         self.conv1 = nn.Conv3d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=True)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv3d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=True)
+        if concrete_dropout:
+            self.concrete_dropout = SpatialConcreteDropout(self.conv2)
         self.batchnorm = nn.BatchNorm3d(out_channels)
         self.pooling = nn.MaxPool3d(2)
 
@@ -60,7 +63,10 @@ class ConvBlock(nn.Module):
 
         x = self.conv1(x)
         x = self.relu(x)
-        x = self.conv2(x)
+        if hasattr(self, 'concrete_dropout'):
+            x = self.concrete_dropout(x)
+        else:
+            x = self.conv2(x)
         x = self.batchnorm(x)
         x = self.relu(x)
         x = self.pooling(x)
