@@ -33,8 +33,7 @@ def get_confusion_matrix(y_pred, y):
 @Metrics.register
 def accuracy(y_pred, y):
     y_pred = y_pred.data.max(dim=1)[1]
-    accuracy = y_pred.eq(y).sum().cpu().numpy() / y.size()[0]
-    return accuracy
+    return sk_metrics.accuracy_score(y.detach().cpu().numpy(), y_pred.detach().cpu().numpy())
 
 def roc_auc(y_pred, y):
     if isinstance(y, torch.Tensor):
@@ -71,11 +70,6 @@ class Sobel3D:
         if self.norm:
             x_filtered = torch.sqrt(torch.sum(x_filtered ** 2, dim=1)).unsqueeze(1)
         return x_filtered
-
-def accuracy(y_pred, y):
-    y_pred = y_pred.data.max(dim=1)[1] # get the indices of the maximum
-    accuracy = y_pred.eq(y).sum().cpu().numpy() / y.size()[0]
-    return accuracy
 
 # True Positive Rate = TP/P (also called Recall)
 def sensitivity(y_pred, y, positive_label=1):

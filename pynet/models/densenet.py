@@ -8,7 +8,7 @@ from pynet.models.layers.dropout import SpatialConcreteDropout
 from torchvision.models.utils import load_state_dict_from_url
 
 
-__all__ = ['DenseNet', 'densenet121', 'densenet169', 'densenet201', 'densenet161']
+__all__ = ['DenseNet', '_densenet', 'densenet121', 'densenet169', 'densenet201', 'densenet161']
 
 model_urls = {
     'densenet121': 'https://download.pytorch.org/models/densenet121-a639ec97.pth',
@@ -155,12 +155,20 @@ class DenseNet(nn.Module):
             if out_block == 'block%i'%(i+1):
                 break
 
+        self.num_features = num_features
+
         if out_block is None:
             # Final batch norm
             self.features.add_module('norm5', nn.BatchNorm3d(num_features))
-
             # Linear layer
             self.classifier = nn.Linear(num_features, num_classes)
+        elif out_block == 'simCLR':
+            self.hidden_representation = nn.Linear(num_features, 512)
+            self.head_projection = nn.Linear(512, 128)
+        elif out_block == 'sup_simCLR':
+            self.hidden_representation = nn.Linear(num_features, 512)
+            self.head_projection = nn.Linear(512, 128)
+            self.classifier = nn.Linear(128, num_classes)
 
         # Official init from torch repo.
         for m in self.modules():
@@ -179,9 +187,27 @@ class DenseNet(nn.Module):
             out = F.adaptive_avg_pool3d(out, 1)
             out = torch.flatten(out, 1)
             out = self.classifier(out)
-        else:
-            out = F.adaptive_avg_pool3d(features, max(int((10**4/features.shape[1])**(1/3)), 1)) # final dim ~ 10**4
+        elif self.out_block[:5] == "block":
+            out = F.adaptive_avg_pool3d(features, max(int((10**4/self.num_features)**(1/3)), 1)) # final dim ~ 10**4
             out = torch.flatten(out, 1)
+        elif self.out_block == "simCLR":
+            out = F.relu(features, inplace=True)
+            out = F.adaptive_avg_pool3d(out, 1)
+            out = torch.flatten(out, 1)
+
+            out = self.hidden_representation(out)
+            out = F.relu(out, inplace=True)
+            out = self.head_projection(out)
+        elif self.out_block == "sup_simCLR":
+            out = F.relu(features, inplace=True)
+            out = F.adaptive_avg_pool3d(out, 1)
+            out = torch.flatten(out, 1)
+
+            out = self.hidden_representation(out)
+            out = F.relu(out, inplace=True)
+            out = self.head_projection(out)
+            out = torch.cat([out, self.classifier(out)], dim=1)
+
         return out.squeeze(dim=1)
 
 

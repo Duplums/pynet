@@ -1,11 +1,6 @@
+import socket
+
 CONFIG = {
-    ## Specific to Kraken TODO: use the computer name to set this automatically
-    # 'input_path': '/home_local/bd261576/all_t1mri_mwp1_gs-raw_data32_tocheck.npy',
-    # 'metadata_path': '/home_local/bd261576/all_t1mri_mwp1_participants.tsv',
-    'input_path': '/neurospin/psy_sbox/analyses/201906_schizconnect-vip-prague-bsnip-biodb-icaar-start_assemble-all/'
-                  'data/cat12vbm/all_t1mri_mwp1_gs-raw_data32_tocheck.npy',
-    'metadata_path': '/neurospin/psy_sbox/analyses/201906_schizconnect-vip-prague-bsnip-biodb-icaar-start_assemble-all/'
-                     'data/cat12vbm/all_t1mri_mwp1_participants.tsv',
     'db': {
         'healthy': {
             'train': {'study': ['HCP', 'IXI'], 'diagnosis': 'control'},
@@ -33,3 +28,12 @@ CONFIG = {
         'StepLR': {'step_size': 10}
     }
 }
+
+if socket.gethostname() == 'kraken':
+    CONFIG['input_path'] = '/home_local/bd261576/all_t1mri_mwp1_gs-raw_data32_tocheck.npy'
+    CONFIG['metadata_path'] = '/home_local/bd261576/all_t1mri_mwp1_participants.tsv'
+else:
+    CONFIG['input_path'] = '/neurospin/psy_sbox/analyses/201906_schizconnect-vip-prague-bsnip-biodb-icaar-start_assemble-all/' \
+                           'data/cat12vbm/all_t1mri_mwp1_gs-raw_data32_tocheck.npy'
+    CONFIG['metadata_path'] = '/neurospin/psy_sbox/analyses/201906_schizconnect-vip-prague-bsnip-biodb-icaar-start_assemble-all/' \
+                              'data/cat12vbm/all_t1mri_mwp1_participants.tsv'

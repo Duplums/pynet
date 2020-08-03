@@ -1,6 +1,7 @@
 import os
 import torch
 import pickle
+import logging
 from pynet.utils import get_chk_name
 from pynet.core import Base
 from pynet.history import History
@@ -14,13 +15,19 @@ class BaseTester():
         self.net = BaseTrainer.build_network(args.net, args.num_classes, args, in_channels=1)
         self.manager = BaseTrainer.build_data_manager(args)
         self.loss = BaseTrainer.build_loss(args.loss, net=self.net)
+        self.logger = logging.getLogger("pynet")
+
+        if self.args.pretrained_path and self.manager.number_of_folds > 1:
+            self.logger.warning('Several folds found while a unique pretrained path is set!')
 
     def run(self):
         epochs_tested = self.get_epochs_to_test()
         for fold in range(self.manager.number_of_folds):
             for epoch in epochs_tested[fold]:
-                pretrained_path = os.path.join(self.args.checkpoint_dir, get_chk_name(self.args.exp_name, fold, epoch))
-                exp_name = "Test_" + self.args.exp_name + "_fold{}_epoch{}".format(fold, epoch)
+                pretrained_path = self.args.pretrained_path or \
+                                  os.path.join(self.args.checkpoint_dir, get_chk_name(self.args.exp_name, fold, epoch))
+                outfile = self.args.outfile_name or ("Test_" + self.args.exp_name)
+                exp_name = outfile + "_fold{}_epoch{}".format(fold, epoch)
                 model = Base(model=self.net, loss=self.loss,
                              metrics=self.args.metrics,
                              pretrained=pretrained_path,
@@ -74,21 +81,47 @@ class AlphaWGANTester(BaseTester):
 
 class BayesianTester(BaseTester):
 
-    def run(self, MC=1):
+    def run(self, MC=10):
         epochs_tested = self.get_epochs_to_test()
 
         for fold in range(self.manager.number_of_folds):
             for epoch in epochs_tested[fold]:
-                pretrained_path = os.path.join(self.args.checkpoint_dir, get_chk_name(self.args.exp_name, fold, epoch))
-                exp_name = "MCTest_" + self.args.exp_name + "_fold{}_epoch{}".format(fold, epoch)
+                pretrained_path = self.args.pretrained_path or \
+                                  os.path.join(self.args.checkpoint_dir, get_chk_name(self.args.exp_name, fold, epoch))
+                outfile = self.args.outfile_name or ("MCTest_" + self.args.exp_name)
+                exp_name = outfile + "_fold{}_epoch{}.pkl".format(fold, epoch)
                 model = Base(model=self.net, loss=self.loss,
                              metrics=self.args.metrics,
                              pretrained=pretrained_path,
                              use_cuda=self.args.cuda)
                 y, y_true = model.MC_test(self.manager.get_dataloader(test=True).test, MC=MC)
-                with open(os.path.join(self.args.checkpoint_dir, exp_name+'.pkl'), 'wb') as f:
+                with open(os.path.join(self.args.checkpoint_dir, exp_name), 'wb') as f:
                     pickle.dump({"y": y, "y_true": y_true}, f)
 
+
+class EnsemblingTester(BaseTester):
+    def run(self, nb_rep=10):
+        if self.args.pretrained_path is not None:
+            raise ValueError('Unset <pretrained_path> to use the EnsemblingTester')
+        epochs_tested = self.get_epochs_to_test()
+
+        for fold in range(self.manager.number_of_folds):
+            for epoch in epochs_tested[fold]:
+                Y, Y_true = [], []
+                for i in range(nb_rep):
+                    pretrained_path = os.path.join(self.args.checkpoint_dir, get_chk_name(self.args.exp_name+
+                                                                                          '_ensemble_%i'%(i+1), fold, epoch))
+                    outfile = self.args.outfile_name or ("EnsembleTest_" + self.args.exp_name)
+                    exp_name = outfile + "_fold{}_epoch{}.pkl".format(fold, epoch)
+                    model = Base(model=self.net, loss=self.loss,
+                                 metrics=self.args.metrics,
+                                 pretrained=pretrained_path,
+                                 use_cuda=self.args.cuda)
+                    y, y_true,_,_,_ = model.test(self.manager.get_dataloader(test=True).test)
+                    Y.append(y)
+                    Y_true.append(y_true)
+                with open(os.path.join(self.args.checkpoint_dir, exp_name), 'wb') as f:
+                    pickle.dump({"y": np.array(Y).swapaxes(0,1), "y_true": np.array(Y_true).swapaxes(0,1)}, f)
 
 class RobustnessTester(BaseTester):
 
@@ -105,8 +138,10 @@ class RobustnessTester(BaseTester):
             for _ in range(nb_repetitions):
                 for fold in range(self.manager.number_of_folds):
                     for epoch in epochs_tested[fold]:
-                        pretrained_path = os.path.join(self.args.checkpoint_dir, get_chk_name(self.args.exp_name, fold, epoch))
-                        exp_name = "Test_" + self.args.exp_name + "_fold{}_epoch{}".format(fold, epoch)
+                        pretrained_path = self.args.pretrained_path or \
+                                          os.path.join(self.args.checkpoint_dir, get_chk_name(self.args.exp_name, fold, epoch))
+                        outfile = self.args.outfile_name or ("Test_" + self.args.exp_name)
+                        exp_name = outfile + "_fold{}_epoch{}".format(fold, epoch)
                         model = Base(model=self.net, loss=self.loss,
                                      metrics=self.args.metrics,
                                      pretrained=pretrained_path,

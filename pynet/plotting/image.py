@@ -85,10 +85,13 @@ def age_discrimination(X, y, age_max_down, age_min_up):
         np.min(y), age_max_down, len(X[y < age_max_down]), age_min_up, np.max(y), len(X[y > age_min_up])))
     plt.show()
 
-def plot_data_reduced(X, labels=None, reduction='pca', cmap=plt.cm.plasma, title=None):
+def plot_data_reduced(X, labels=None, reduction='pca', cmap=plt.cm.plasma, ax=None, title=None):
     # Assume that X has dimension (n_samples, ...) and labels is a list of n_samples labels
     # associated to X
     assert reduction in ['pca', 't_sne'], "Reduction method not implemented yet"
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(20, 30))
+
     if reduction == 'pca':
         pca = PCA(n_components=2)
         # Do the SVD
@@ -97,23 +100,20 @@ def plot_data_reduced(X, labels=None, reduction='pca', cmap=plt.cm.plasma, title
         PC = pca.transform(X.reshape(len(X), -1))
     else:
         PC = TSNE(n_components=2).fit_transform(X.reshape(len(X), -1))
-    fig, ax = plt.subplots(figsize=(20, 30))
     # Color each point according to its label
     if labels is not None:
         labels = np.array(labels)
         label_mapping = {l: cmap(int(i * float(cmap.N - 1) / len(set(labels)))) for (i, l) in enumerate(set(labels))}
         for l in label_mapping:
-            plt.scatter(PC[:,0][labels == l], PC[:,1][labels == l], c=[label_mapping[l]], label=l)
+            ax.scatter(PC[:,0][labels == l], PC[:,1][labels == l], c=[label_mapping[l]], label=l)
     else:
-        plt.scatter(PC[:,0], PC[:,1], alpha=0.8)
+        ax.scatter(PC[:,0], PC[:,1], alpha=0.8)
     if reduction == 'pca':
-        plt.xlabel("PC1 (var=%.2f)" % pca.explained_variance_ratio_[0])
-        plt.ylabel("PC2 (var=%.2f)" % pca.explained_variance_ratio_[1])
-    plt.legend()
+        ax.set_xlabel("PC1 (var=%.2f)" % pca.explained_variance_ratio_[0])
+        ax.set_ylabel("PC2 (var=%.2f)" % pca.explained_variance_ratio_[1])
+    ax.legend()
     if title:
-        plt.title(title)
-    plt.axis('equal')
-    plt.show()
+        ax.set_title(title)
 
 def plot_losses(train_history, val_history=None, patterns_to_del=None,
                 metrics=None, experiment_names=None, titles=None, ylabels=None,
@@ -317,7 +317,7 @@ def plot_3d_data(data, nb_samples=3, channel=None, channel_names=None,
     if random:
         indices = np.random.randint(0, total_samples, nb_samples)
     else:
-        indices = np.range(nb_samples)
+        indices = np.arange(nb_samples)
 
     cuts = ['x', 'y', 'z']
     cuts_name = ['SAG', 'COR', 'AXI']
@@ -404,7 +404,7 @@ logger = logging.getLogger("pynet")
 
 
 def plot_data(data, slice_axis=2, nb_samples=5, channel=0, labels=None,
-              random=True, rgb=False, cmap=None, title=None)
+              random=True, rgb=False, cmap=None, title=None):
     """ Plot an image associated data.
 
     Currently support 2D or 3D dataset of the form (samples, channels, dim).

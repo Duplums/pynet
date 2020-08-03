@@ -88,6 +88,9 @@ class Visualizer:
         if images is None:
             return
 
+        if isinstance(images, torch.Tensor):
+            images = images.detach().cpu().numpy()
+
         assert len(images.shape) in [4, 5], \
             "The images must have a shape NxCxHxW or NxCxHxWxD, unsupported shape {}".format(images.shape)
         if labels is not None:

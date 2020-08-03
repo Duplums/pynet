@@ -1,5 +1,6 @@
 from pynet.core import Base
 from pynet.datasets.core import DataManager
+from pynet.sim_clr import SimCLRDataset, SimCLR
 from pynet.models.resnet import *
 from pynet.models.densenet import *
 from pynet.models.vgg import *
@@ -8,6 +9,7 @@ from pynet.models.colenet import ColeNet
 from pynet.models.psynet import PsyNet
 from pynet.models.alpha_wgan import *
 import pandas as pd
+import re
 from json_config import CONFIG
 from pynet.transforms import *
 
@@ -26,13 +28,16 @@ class BaseTrainer():
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, gamma=args.gamma_scheduler,
                                                          **CONFIG['scheduler']['StepLR'])
 
-        self.model = Base(model=self.net,
-                          metrics=args.metrics,
-                          pretrained=args.pretrained_path,
-                          load_optimizer=args.load_optimizer,
-                          use_cuda=args.cuda,
-                          loss=self.loss,
-                          optimizer=self.optimizer)
+        model_cls = SimCLR if args.model == "SimCLR" else Base
+
+        self.model = model_cls(model=self.net,
+                               metrics=args.metrics,
+                               pretrained=args.pretrained_path,
+                               freeze_until_layer=args.freeze_until_layer,
+                               load_optimizer=args.load_optimizer,
+                               use_cuda=args.cuda,
+                               loss=self.loss,
+                               optimizer=self.optimizer)
 
     def run(self):
         with_validation = (self.args.nb_folds > 1) or ('validation' in CONFIG['db'][self.args.db])
@@ -45,7 +50,7 @@ class BaseTrainer():
                                                            exp_name=self.args.exp_name,
                                                            fold_index=self.args.folds,
                                                            standard_optim=getattr(self.net, 'std_optim', True),
-                                                           with_visualization=False)
+                                                           with_visualization=self.args.with_visualization)
 
         return train_history, valid_history
 
@@ -58,6 +63,12 @@ class BaseTrainer():
         elif name == 'BCE_concrete_dropout':
             assert net is not None, "A model is mandatory to compute the regularization term"
             loss = ConcreteDropoutLoss(net, nn.BCEWithLogitsLoss(), weight_regularizer=1e-6, dropout_regularizer=1e-5)
+        elif name == "NTXenLoss":
+            loss = NTXenLoss(temperature=0.1, return_logits=True)
+        elif name == "multi_l1_bce": # mainly for (age, sex) prediction
+            loss = MultiTaskLoss([nn.L1Loss(), nn.BCEWithLogitsLoss()], weights=[1, 1])
+        elif name == "l1_sup_NTXenLoss": # Mainly for supervised SimCLR
+            loss = SupervisedNTXenLoss(supervised_loss=nn.L1Loss(), alpha=1, temperature=0.1, return_logits=True)
         else:
             raise ValueError("Loss not yet implemented")
             # loss = SSIM()
@@ -71,9 +82,10 @@ class BaseTrainer():
     @staticmethod
     def build_network(name, num_classes, args, **kwargs):
         if name == "resnet18":
-            net = resnet18(pretrained=False, num_classes=num_classes, **kwargs)
+            net = resnet18(pretrained=False, num_classes=num_classes, concrete_dropout=args.concrete_dropout, **kwargs)
         elif name == "resnet34":
-            net = resnet34(pretrained=False, num_classes=num_classes, prediction_bias=False, **kwargs)
+            net = resnet34(pretrained=False, num_classes=num_classes, concrete_dropout=args.concrete_dropout,
+                           prediction_bias=False, **kwargs)
         elif name == "light_resnet34":
             net = resnet34(pretrained=False, num_classes=num_classes, initial_kernel_size=3, **kwargs)
         elif name == "resnet50":
@@ -89,10 +101,34 @@ class BaseTrainer():
         elif name == "densenet121":
             net = densenet121(progress=False, num_classes=num_classes, drop_rate=args.dropout, bayesian=args.bayesian,
                               concrete_dropout=args.concrete_dropout, **kwargs)
-        elif name in ["densenet121_block%i"%i for i in range(1,5)]:
-            block = name[-6:]
+        elif name in ["densenet121_block%i"%i for i in range(1,5)]+['densenet121_simCLR', 'densenet121_sup_simCLR']:
+            block = re.search('densenet121_(\w+)', name)[1]
             net = densenet121(progress=False, num_classes=num_classes, drop_rate=args.dropout, bayesian=args.bayesian,
                               concrete_dropout=args.concrete_dropout, out_block=block, **kwargs)
+        elif name == "tiny_densenet_exp1": # 300K
+            net = _densenet('exp1', 4, (6, 12, 24, 16), 8, False, False, num_classes=num_classes, drop_rate=args.dropout,
+                            bayesian=args.bayesian, concrete_dropout=args.concrete_dropout, **kwargs)
+        elif name == "tiny_densenet_exp3": # 3.3M
+            net = _densenet('exp3', 16, (6, 12, 24, 16), 8, False, False, num_classes=num_classes, drop_rate=args.dropout,
+                            bayesian=args.bayesian, concrete_dropout=args.concrete_dropout, **kwargs)
+        elif name == "tiny_densenet_exp4": # 4.8M
+            net = _densenet('exp4', 32, (3, 6, 12, 8), 8, False, False, num_classes=num_classes, drop_rate=args.dropout,
+                            bayesian=args.bayesian, concrete_dropout=args.concrete_dropout, **kwargs)
+        elif name == "tiny_densenet_exp5": # 1.3M
+            net = _densenet('exp5', 16, (3, 6, 12, 8), 8, False, False, num_classes=num_classes, drop_rate=args.dropout,
+                            bayesian=args.bayesian, concrete_dropout=args.concrete_dropout, **kwargs)
+        elif name == "tiny_densenet_exp6": # 1.4M
+            net = _densenet('exp6', 16, (3, 6, 12, 8), 64, False, False, num_classes=num_classes, drop_rate=args.dropout,
+                            bayesian=args.bayesian, concrete_dropout=args.concrete_dropout, **kwargs)
+        elif name == "densenet169": # 20.2M
+            net = _densenet('exp7', 32, (6, 12, 32, 32), 64, False, False, num_classes=num_classes, drop_rate=args.dropout,
+                            bayesian=args.bayesian, concrete_dropout=args.concrete_dropout, **kwargs)
+        elif name == "tiny_densenet_exp8": # 6M
+            net = _densenet('exp8', 32, (6, 12, 16), 64, False, False, num_classes=num_classes, drop_rate=args.dropout,
+                            bayesian=args.bayesian, concrete_dropout=args.concrete_dropout, **kwargs)
+        elif name == "tiny_densenet_exp9": # 1.8M
+            net = _densenet('exp9', 16, (6, 12, 16), 64, False, False, num_classes=num_classes, drop_rate=args.dropout,
+                            bayesian=args.bayesian, concrete_dropout=args.concrete_dropout, **kwargs)
         elif name == 'cole_net':
             net = ColeNet(num_classes, [1, 128, 128, 128], concrete_dropout=args.concrete_dropout)
         elif name == "alpha_wgan":
@@ -118,7 +154,7 @@ class BaseTrainer():
         df = pd.read_csv(args.metadata_path, sep='\t')
         labels = args.labels or []
         add_to_input = None
-        data_augmentation = [RandomFlip(hflip=True, vflip=True)]
+        data_augmentation = [RandomFlip(hflip=True, vflip=True)] if 'flip' in args.da else None
         self_supervision = None  # RandomPatchInversion(patch_size=15, data_threshold=0)
         input_transforms = kwargs.get('input_transforms')
         output_transforms = None
@@ -167,31 +203,38 @@ class BaseTrainer():
         else:
             labels_transforms = [lambda in_labels: [known_labels[labels[i]][0](l) for i, l in enumerate(in_labels)]]
 
-
+        dataset_cls = None
+        if args.model == "SimCLR":
+            if args.test and args.test=='with_training':
+                raise ValueError('Impossible to build a DataManager for SimCLR in training and test mode')
+            elif not args.test:
+                dataset_cls = SimCLRDataset
 
         manager = DataManager(args.input_path, args.metadata_path,
-                               batch_size=args.batch_size,
-                               number_of_folds=args.nb_folds,
-                               add_to_input=add_to_input,
-                               add_input=args.add_input,
-                               labels=labels,
-                               sampler=args.sampler,
-                               projection_labels=projection_labels,
-                               custom_stratification=stratif,
-                               categorical_strat_label=categorical_strat_label,
-                               stratify_label=args.stratify_label,
-                               N_train_max=args.N_train_max,
-                               input_transforms=input_transforms,
-                               stratify_label_transforms=strat_label_transforms,
-                               labels_transforms=labels_transforms,
-                               data_augmentation=data_augmentation,
-                               self_supervision=self_supervision,
-                               output_transforms=output_transforms,
-                               patch_size=patch_size,
-                               input_size=input_size,
-                               pin_memory=args.pin_mem,
-                               drop_last=args.drop_last,
-                               device=('cuda' if args.cuda else 'cpu'))
+                              batch_size=args.batch_size,
+                              number_of_folds=args.nb_folds,
+                              add_to_input=add_to_input,
+                              add_input=args.add_input,
+                              labels=labels,
+                              sampler=args.sampler,
+                              projection_labels=projection_labels,
+                              custom_stratification=stratif,
+                              categorical_strat_label=categorical_strat_label,
+                              stratify_label=args.stratify_label,
+                              N_train_max=args.N_train_max,
+                              input_transforms=input_transforms,
+                              stratify_label_transforms=strat_label_transforms,
+                              labels_transforms=labels_transforms,
+                              data_augmentation=data_augmentation,
+                              self_supervision=self_supervision,
+                              output_transforms=output_transforms,
+                              patch_size=patch_size,
+                              input_size=input_size,
+                              pin_memory=args.pin_mem,
+                              drop_last=args.drop_last,
+                              dataset=dataset_cls,
+                              device=('cuda' if args.cuda else 'cpu'),
+                              num_workers=args.num_cpu_workers)
 
         return manager
 

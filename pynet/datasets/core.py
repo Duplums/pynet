@@ -48,7 +48,7 @@ class DataManager(object):
                  N_train_max=None,  projection_labels=None, number_of_folds=10, batch_size=1, sampler=None,
                  in_features_transforms=None, input_transforms=None, output_transforms=None, labels_transforms=None,
                  stratify_label_transforms=None, data_augmentation=None, self_supervision=None, add_input=False,
-                 patch_size=None, input_size=None, test_size=0.1, device='cpu',
+                 patch_size=None, input_size=None, test_size=0.1, dataset=None, device='cpu',
                  **dataloader_kwargs):
         """ Splits an input numpy array using memory-mapping into three sets:
         test, train and validation. This function can stratify the data.
@@ -103,6 +103,8 @@ class DataManager(object):
         test_size: float, default 0.1
             should be between 0.0 and 1.0 and represent the proportion of the
             dataset to include in the test split.
+        dataset: Dataset object, default None
+            The Dataset used to create the DataLoader. It must be a subclass of <ArrayDataset>
         """
         df = pd.read_csv(metadata_path, sep="\t")
         mask = DataManager.get_mask(
@@ -156,6 +158,10 @@ class DataManager(object):
         self.data_loader_kwargs = dataloader_kwargs
         assert sampler in [None, "weighted_random", "random"], "Unknown sampler: %s" % str(sampler)
         self.sampler = sampler
+
+        dataset_cls = ArrayDataset if dataset is None else dataset
+        assert issubclass(dataset_cls, ArrayDataset)
+
 
         if self.sampler == "weighted_random":
             if self.stratify_label is None:
@@ -212,7 +218,7 @@ class DataManager(object):
 
         if self.labels is not None:
             assert len(self.labels) == len(self.inputs)
-        self.dataset["test"] = ArrayDataset(
+        self.dataset["test"] = dataset_cls(
             self.inputs, test_indices, labels=self.labels,
             features_to_add=self.features_to_add,
             outputs=self.outputs, add_input=self.add_input,
@@ -266,7 +272,7 @@ class DataManager(object):
         for fold_train_index, fold_val_index in gen:
             assert len(set(fold_val_index) & set(fold_train_index)) == 0
 
-            train_dataset = ArrayDataset(
+            train_dataset = dataset_cls(
                 self.inputs, fold_train_index,
                 labels=self.labels, outputs=self.outputs,
                 features_to_add=self.features_to_add,
@@ -278,7 +284,7 @@ class DataManager(object):
                 self_supervision=self.self_supervision,
                 patch_size=patch_size, input_size=input_size,
                 device=device)
-            val_dataset = ArrayDataset(
+            val_dataset = dataset_cls(
                 self.inputs, fold_val_index,
                 labels=self.labels, outputs=self.outputs,
                 features_to_add=self.features_to_add,
@@ -345,12 +351,11 @@ class DataManager(object):
                     data[key] = torch.stack([torch.as_tensor(getattr(s, key), dtype=torch.float) for s in list_samples], dim=0)
         if data["labels"] is not None:
             data["labels"] = data["labels"].type(torch.FloatTensor)
-        print("Labels repartition: {}".format(np.unique(data["labels"].detach().cpu().numpy(), return_counts=True)[1]), flush=True)
         return DataItem(**data)
 
     def get_dataloader(self, train=False, validation=False, test=False,
                        fold_index=0):
-        """ Generate a putorch DataLoader.
+        """ Generate a pytorch DataLoader.
 
         Parameters
         ----------
@@ -556,17 +561,15 @@ class ArrayDataset(Dataset):
                     _outputs = self.output_cached[indx]
                 return DataItem(inputs=_inputs, outputs=_outputs, labels=_labels)
 
-        _inputs = torch.tensor(self.inputs[self.indices[item]], device=self.device)
+        _inputs = self.inputs[self.indices[item]]
         _labels, _outputs = (None, None)
         if self.labels is not None: # Particular case in which we can deal with strings before transformations...
             _labels = self.labels[self.indices[item]]
         if self.outputs is not None:
             if self.add_input:
-                _outputs = torch.cat(
-                    (torch.tensor(self.outputs[self.indices[item]], device=self.device), _inputs),
-                    dim=concat_axis)
+                _outputs = np.concatenate((self.outputs[self.indices[item]], _inputs), axis=concat_axis)
             else:
-                _outputs = torch.tensor(self.outputs[self.indices[item]], device=self.device)
+                _outputs = self.outputs[self.indices[item]]
 
         # Apply the transformations to the data
         for tf in self.input_transforms:
@@ -577,7 +580,6 @@ class ArrayDataset(Dataset):
         if _labels is not None:
             for tf in self.labels_transforms:
                 _labels = tf(_labels)
-            _labels = torch.tensor(_labels, device=self.device)
 
         if self.self_supervision is not None:
             _inputs, _labels = self.self_supervision(_inputs)
@@ -590,10 +592,10 @@ class ArrayDataset(Dataset):
             indx = np.unravel_index(offset, np.array(self.input_size) // np.array(self.patch_size))
 
             # Store everything in a cache to avoid useless computations...
-            self.input_cached = torch.tensor(view_as_blocks(_inputs, tuple(self.patch_size)), device=self.device)
+            self.input_cached = view_as_blocks(_inputs, tuple(self.patch_size))
             self.output_cached = _outputs
             if self.output_same_as_input:
-                self.output_cached = torch.tensor(view_as_blocks(_outputs, tuple(self.patch_size)), device=self.device)
+                self.output_cached = _outputs, tuple(self.patch_size)
             self.label_cached = _labels
 
             _inputs = self.input_cached[indx]
@@ -602,7 +604,7 @@ class ArrayDataset(Dataset):
 
         # Finally, add the other input features, if any
         if self.features_to_add is not None:
-            _features = torch.tensor(self.features_to_add[self.indices[item]], device=self.device)
+            _features = self.features_to_add[self.indices[item]]
             if self.in_features_transforms is not None:
                 for tf in self.in_features_transforms:
                     _features = tf(_features)

@@ -16,7 +16,15 @@ is loaded.
 import collections
 import numpy as np
 from scipy.ndimage import rotate, affine_transform
+from skimage import transform as sk_tf
 import torch
+
+class Scaler(object):
+    def __init__(self, scale=1):
+        self.scale = scale
+
+    def __call__(self, data):
+        return self.scale * data
 
 class LabelMapping(object):
 
@@ -41,10 +49,10 @@ class HardNormalization(object):
         self.eps = eps
 
     def __call__(self, arr):
-        min_arr = torch.min(arr)
-        max_arr = torch.max(arr)
-        if torch.abs(min_arr - max_arr) < self.eps:
-            return torch.zeros_like(arr)
+        min_arr = np.min(arr)
+        max_arr = np.max(arr)
+        if np.abs(min_arr - max_arr) < self.eps:
+            return np.zeros_like(arr)
         return ((self.max-self.min) * arr + (self.min*max_arr - self.max*min_arr))/(max_arr-min_arr)
 
 class RandomFlip(object):
@@ -55,10 +63,10 @@ class RandomFlip(object):
 
     def __call__(self, arr):
         if self.vflip and np.random.rand() < self.prob:
-            arr = torch.flip(arr, dims=[2])
+            arr = np.flip(arr, axis=[2])
         if self.hflip and np.random.rand() < self.prob:
-            arr = torch.flip(arr, dims=[1])
-        return arr
+            arr = np.flip(arr, axis=[1])
+        return arr.copy()
 
 class RandomPatchInversion(object):
     def __init__(self, patch_size=10, data_threshold=0):
@@ -66,7 +74,7 @@ class RandomPatchInversion(object):
         self.patch_size = patch_size
 
     def __call__(self, arr, label=None):
-        assert isinstance(arr, torch.Tensor)
+        assert isinstance(arr, np.ndarray)
         if label is None:
             label = int(np.random.rand() < 0.5)
         assert label in [0, 1], "Unexpected label"
@@ -83,7 +91,7 @@ class RandomPatchInversion(object):
             arr[patch1] = arr[patch2]
             arr[patch2] = data_patch1
             print(patch1, patch2)
-        return arr, torch.tensor(label, device=arr.device)
+        return arr, label
     
     def get_random_patch(self, mask):
         # Warning: we assume the mask is convex
@@ -121,7 +129,7 @@ class Random90_3DRot(object):
         self.test_unicity()
 
     def __call__(self, arr, label=None):
-        assert len(arr.shape) == 4 and isinstance(arr, torch.Tensor)
+        assert len(arr.shape) == 4 and isinstance(arr, np.ndarray)
         # Chose a label
         if label is None:
             label = np.random.randint(0, self.num_classes)
@@ -141,14 +149,14 @@ class Random90_3DRot(object):
         # Put the selected face to front or back (front is the axes (0, 1) in 3D, (1, 2) in 4D with the channel)
         if direction == 0:
             (k, axes) = self.cube_face_to_front[cube_face//2]
-            arr = torch.rot90(arr, k=k, dims=axes)
+            arr = np.rot90(arr, k=k, axis=axes)
 
         elif direction == 1:
             (k, axes) = self.cube_face_to_back[cube_face//2]
-            arr = torch.rot90(arr, k=k, dims=axes)
+            arr = np.rot90(arr, k=k, axis=axes)
 
         # Rotate of the chosen angle in the direction selected
-        arr = torch.rot90(arr, k=self.rot_to_k[angle], dims=face_axes)
+        arr = np.rot90(arr, k=self.rot_to_k[angle], axis=face_axes)
         return arr, label
 
     def test_unicity(self):
@@ -169,17 +177,18 @@ class Normalize(object):
         self.eps=eps
 
     def __call__(self, arr):
-        return self.std * (arr - torch.mean(arr))/(torch.std(arr.float()) + self.eps) + self.mean
+        return self.std * (arr - np.mean(arr))/(np.std(arr) + self.eps) + self.mean
 
 class Crop(object):
     """Crop the given n-dimensional array either at a random location or centered"""
-    def __init__(self, shape, type="center"):
+    def __init__(self, shape, type="center", resize=False):
         assert type in ["center", "random"]
         self.shape = shape
         self.copping_type = type
+        self.resize=resize
 
-    def __call__(self, arr):
-        assert isinstance(arr, torch.Tensor)
+    def __call__(self, arr, seed=None):
+        assert isinstance(arr, np.ndarray)
         assert type(self.shape) == int or len(self.shape) == len(arr.shape)
 
         img_shape = np.array(arr.shape)
@@ -196,7 +205,9 @@ class Crop(object):
             elif self.copping_type == "random":
                 delta_before = np.random.randint(0, img_shape[ndim] - size[ndim] + 1)
             indexes.append(slice(delta_before, delta_before + size[ndim]))
-
+        if self.resize:
+            # resize the image to the input shape
+            return sk_tf.resize(arr[tuple(indexes)], img_shape, preserve_range=True)
         return arr[tuple(indexes)]
 
 class GaussianNoise:
@@ -225,7 +236,7 @@ class RandomAffineTransform3d:
         self.translate = translate
 
     def __call__(self, arr):
-        assert len(arr.shape) == 4 and isinstance(arr, torch.Tensor) # == (C, H, W, D)
+        assert len(arr.shape) == 4 and isinstance(arr, np.ndarray) # == (C, H, W, D)
 
         arr_shape = np.array(arr.shape)
         angles = [np.deg2rad(np.random.random() * (angle_max - angle_min) + angle_min)
@@ -242,20 +253,9 @@ class RandomAffineTransform3d:
                        for i,t in enumerate(self.translate)]
         out = np.zeros(arr_shape, dtype=arr.dtype)
         for c in range(arr_shape[0]):
-            affine_transform(arr[c].cpu().numpy(), R.T, offset=offset+translation, output=out[c], mode='nearest')
+            affine_transform(arr[c], R.T, offset=offset+translation, output=out[c], mode='nearest')
 
-        return torch.tensor(out, device=arr.device)
-
-
-if __name__ == '__main__':
-    from pynet.plotting.image import plot_anat_array
-    import nibabel
-
-    t = RandomAffineTransform3d(40, 0.1)
-    test_1 = np.array([nibabel.load('/neurospin/psy/hcp/derivatives/cat12vbm/sub-165941/mri/mwp1165941_3T_T1w_MPR1.nii').get_data()])
-    plot_anat_array(test_1[0])
-    test_1_trans = t(test_1)
-    plot_anat_array(test_1_trans[0])
+        return out
 
 
 class Rotation(object):
@@ -332,12 +332,12 @@ class Padding(object):
             shape_i = final_i - orig_i
             half_shape_i = shape_i // 2
             if shape_i % 2 == 0:
-                padding.extend([half_shape_i, half_shape_i])
+                padding.append([half_shape_i, half_shape_i])
             else:
-                padding.extend([half_shape_i, half_shape_i + 1])
+                padding.append([half_shape_i, half_shape_i + 1])
         for cnt in range(len(arr.shape) - len(padding)):
-            padding.extend([0, 0])
-        fill_arr = torch.nn.functional.pad(arr, padding[::-1], **self.kwargs)
+            padding.append([0, 0])
+        fill_arr = np.pad(arr, padding, **self.kwargs)
         return fill_arr
 
 

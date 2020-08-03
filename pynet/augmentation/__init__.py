@@ -26,7 +26,7 @@ from .intensity import add_spike
 from .intensity import add_biasfield
 from .intensity import add_motion
 from .intensity import add_offset
-
+from .intensity import add_swap
 
 # Global parameters
 logger = logging.getLogger("pynet")

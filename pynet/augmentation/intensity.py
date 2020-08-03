@@ -23,6 +23,52 @@ from .transform import affine_flow
 from .utils import interval
 
 
+
+def add_swap(arr, patch_size=15, num_iterations=10, data_threshold=None, seed=None):
+    """Randomly swap patches within an image.
+        cf. Self-supervised learning for medical image analysis using image context restoration, L. Chen, MIA 2019
+        Args:
+            patch_size: Tuple of integers :math:`(d, h, w)` to swap patches
+                of size :math:`d \times h \times w`.
+                If a single number :math:`n` is provided, :math:`d = h = w = n`.
+            num_iterations: Number of times that two patches will be swapped.
+            data_threshold: min value to define the mask in which the patches are selected
+            seed: seed to control random number generator.
+    """
+    np.random.seed(seed)
+
+    if isinstance(patch_size, int):
+        patch_size = len(arr.shape)*(patch_size,)
+    if data_threshold is None:
+        data_threshold = np.min(arr)
+
+    arr = arr.copy()
+
+    def get_random_patch(mask):
+        # Warning: we assume the mask is convex
+        possible_indices = mask.nonzero()
+        if len(possible_indices[0]) == 0:
+            raise ValueError("Empty mask")
+        index = np.random.randint(len(possible_indices[0]))
+        point = [min(ind[index], mask.shape[i]-patch_size[i]) for i, ind in enumerate(possible_indices)]
+        patch = tuple([slice(p, p + patch_size[i]) for i,p in enumerate(point)])
+        return patch
+
+
+    for _ in range(num_iterations):
+        # Selects 2 random non-overlapping patches
+        mask = (arr > data_threshold)
+        # Get a first random patch inside the mask
+        patch1 = get_random_patch(mask)
+        # Get a second one outside the first patch and inside the mask
+        mask[patch1] = False
+        patch2 = get_random_patch(mask)
+        data_patch1 = arr[patch1].copy()
+        arr[patch1] = arr[patch2]
+        arr[patch2] = data_patch1
+
+    return arr
+
 def add_offset(arr, factor, seed=None):
     """ Add a random intensity offset (shift and scale).
 

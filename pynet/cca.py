@@ -61,7 +61,6 @@ def _cca(x, y, method):
     :return: _cca vectors for input x, _cca vectors for input y, canonical correlations
     """
     assert x.size(0) == y.size(0), f"Number of data needs to be same but {x.size(0)} and {y.size(0)}"
-    assert x.size(0) >= x.size(1) and y.size(0) >= y.size(1), f"data[0] should be larger than data[1]"
     assert method in ("svd", "qr"), "Unknown method"
 
     x = zero_mean(x, dim=0)
@@ -186,22 +185,27 @@ class CCAHook(object):
         return self._hooked_value
 
     @staticmethod
-    def _conv3d_reshape(tensor, size):
+    def _conv3d_reshape(tensor, size, same_layer=True):
         b, c, h, w, d = tensor.shape
         if size is not None:
             if (size, size, size) > (h, w, d):
                 raise RuntimeError(f"`size` should be smaller than the tensor's size but ({h}, {w}, {d})")
             else:
                 tensor = F.adaptive_avg_pool3d(tensor, size)
-        tensor = tensor.permute(0,2,3,4,1).reshape(-1, c) # size (HWDN) x C
+        if same_layer:
+            tensor = tensor.permute(1,0,2,3,4).reshape(c, -1) # size C x (HWDB) [data x neurons]
+        else:
+            tensor = tensor.reshape(b, -1) # size B x (CHWD) [data x neurons]
         return tensor
 
     @staticmethod
-    def _conv3d(tensor1, tensor2, cca_function, size, **kwargs):
-        if tensor1.shape != tensor2.shape:
-            raise RuntimeError("tensors' shapes are incompatible!")
-        tensor1 = CCAHook._conv3d_reshape(tensor1, size)
-        tensor2 = CCAHook._conv3d_reshape(tensor2, size)
+    def _conv3d(tensor1, tensor2, cca_function, size1, size2, same_layer=True, **kwargs):
+        if same_layer:
+            assert tensor1.shape == tensor2.shape, 'Wrong shape.'
+        else:
+            assert tensor1.shape[0] == tensor2.shape[0], 'tensor1 and tensor2 should have the same first dimension.'
+        tensor1 = CCAHook._conv3d_reshape(tensor1, size1, same_layer)
+        tensor2 = CCAHook._conv3d_reshape(tensor2, size2, same_layer)
         print("CCA computations between tensor 1 ({}) and tensor 2 ({})".format(tensor1.shape, tensor2.shape),
               flush=True)
         return cca_function(tensor1, tensor2, **kwargs)

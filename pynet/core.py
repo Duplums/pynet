@@ -14,25 +14,20 @@ Core classes.
 # System import
 import os
 import pickle
-from collections import OrderedDict
 from copy import deepcopy
 
 # Third party import
-from torchvision import models
 import torch
 import torch.nn.functional as func
-from torch.utils.data import DataLoader
 from tqdm import tqdm
 import numpy as np
 
 # Package import
-from pynet.datasets.core import DataManager
-from pynet.utils import checkpoint
+from pynet.utils import checkpoint, freeze_until
 from pynet.history import History
 from pynet.visualization import Visualizer
 from pynet.observable import Observable
 import pynet.metrics as mmetrics
-from pynet.utils import reset_weights
 
 
 class Base(Observable):
@@ -40,7 +35,7 @@ class Base(Observable):
     """
     def __init__(self, optimizer_name="Adam", learning_rate=1e-3,
                  loss_name="NLLLoss", metrics=None, use_cuda=False,
-                 pretrained=None, load_optimizer=True, **kwargs):
+                 pretrained=None, freeze_until_layer=None, load_optimizer=True, **kwargs):
         """ Class instantiation.
 
         Observers will be notified, allowed signals are:
@@ -128,6 +123,9 @@ class Base(Observable):
                         print("Warning: the optimizer's weights are not restored ! ", flush=True)
             else:
                 self.model.load_state_dict(checkpoint)
+        if freeze_until_layer is not None:
+            freeze_until(self.model, freeze_until_layer)
+
         self.model = self.model.to(self.device)
 
     def training(self, manager, nb_epochs, checkpointdir=None, fold_index=None,
@@ -199,7 +197,7 @@ class Base(Observable):
             for epoch in range(nb_epochs):
                 self.notify_observers("before_epoch", epoch=epoch, fold=fold)
                 loss, values = self.train(loader.train, train_history,
-                                          train_visualizer, fold, epoch, standard_optim)
+                                          train_visualizer, fold, epoch, standard_optim=standard_optim)
                 train_history.summary()
                 if scheduler is not None:
                     scheduler.step()
@@ -471,7 +469,6 @@ class Base(Observable):
 
         with torch.no_grad():
             y, y_true = [], []
-            outputs = None
             for dataitem in loader:
                 pbar.update()
                 inputs = dataitem.inputs.to(self.device)

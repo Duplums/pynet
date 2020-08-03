@@ -20,6 +20,8 @@ import os
 import re
 import sys
 import inspect
+from scipy.special import expit
+from sklearn.metrics import roc_auc_score, balanced_accuracy_score, confusion_matrix, average_precision_score
 
 # Third party imports
 import torch
@@ -226,7 +228,7 @@ def get_pickle_obj(path):
 def get_chk_name(name, fold, epoch):
     return "{name}_{fold}_epoch_{epoch}.pth".format(name=name or "model",fold=fold,epoch=epoch)
 
-def checkpoint(model, epoch, fold, outdir, optimizer=None, scheduler=None,
+def checkpoint(model, epoch, fold, outdir, name=None, optimizer=None, scheduler=None,
                **kwargs):
     """ Save the weights of a given model.
 
@@ -366,6 +368,22 @@ def freeze_layers(model, layer_names):
             param.requires_grad = False
 
 
+def freeze_until(model, name):
+    # freeze layer until a certain block, excluded
+    condition_met = False
+    layers_frozen = []
+    for (param_name, param) in model.named_parameters():
+        if name not in param_name:
+            param.requires_grad = False
+            layers_frozen.append(param_name)
+        else:
+            logger.info("Parameters frozen are:\n{}".format(layers_frozen))
+            condition_met = True
+            break
+    if not condition_met:
+        logger.warning("No layer named {}. The whole network is frozen".format(name))
+
+
 def reset_weights(model, checkpoint=None):
     """ Reset all the weights of a model. If a checkpoint is given, restore
     the checkpoint weights.
@@ -402,7 +420,46 @@ def tensor2im(tensor):
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
+def get_binary_classification_metrics(path, epochs_tested, folds_tested, MCTest=False, Ensembling=False):
 
+    assert len(epochs_tested) == len(folds_tested), "Invalid nb of epochs or folds"
+
+    test_results = [get_pickle_obj(path.format(fold=f, epoch=e)) for (f, e) in zip(folds_tested, epochs_tested)]
+    entropy_func = lambda sigma: - ((1 - sigma) * np.log(1 - sigma + 1e-8) + sigma * np.log(sigma + 1e-8))
+
+    ## MC Tests
+    if MCTest or Ensembling:
+        MI = np.concatenate(
+            [entropy_func(expit(np.array(t['y'])).mean(axis=1)) - entropy_func(expit(np.array(t['y']))).mean(axis=1)
+             for i, t in enumerate(test_results)])
+        test_results = [{'y_pred': expit(np.array(t['y'])).mean(axis=1), 'y_true': np.array(t['y_true'])[:, 0]} for t in
+                        test_results]
+        assert all(np.array_equal(np.array(t['y_true']), np.array(test_results[0]['y_true'])) for t in test_results)
+        print('MI = {} +/- {}'.format(np.mean(MI), np.std(MI)))
+
+    else:
+        test_results = [{'y_pred': expit(np.array(t['y_pred'])), 'y_true': np.array(t['y_true'])} for t in test_results]
+
+    y_pred, y_true = np.array([t['y_pred'] for t in test_results]), np.array([t['y_true'] for t in test_results])
+    H_pred = entropy_func(y_pred)
+    mask_corr = [(pred > 0.5) == true for (pred, true) in zip(y_pred, y_true)]
+    H_pred_corr = np.concatenate([H_pred[f][mask_corr[f]] for f in folds_tested])
+    H_pred_incorr = np.concatenate([H_pred[f][~mask_corr[f]] for f in folds_tested])
+    all_auc = [roc_auc_score(t['y_true'], np.array(t['y_pred'])) for t in test_results]
+    all_aupr_success = [average_precision_score(t['y_true'], t['y_pred']) for t in test_results]
+    all_aupr_error = [average_precision_score(1-np.array(t['y_true']), -np.array(t['y_pred'])) for t in test_results]
+
+    all_confusion_matrix = [confusion_matrix(t['y_true'], np.array(t['y_pred']) > 0.5) for t in test_results]
+    recall = [[m[i, i] / m[i, :].sum() for m in all_confusion_matrix] for i in range(2)]
+    precision = [m[1, 1] / m[:, 1].sum() for m in all_confusion_matrix]
+    bacc = [balanced_accuracy_score(t['y_true'], np.array(t['y_pred']) > 0.5) for t in test_results]
+    print('Mean AUC= {} +/- {} \nMean Balanced Acc = {} +/- {}\nMean Recall_+ = {} +/- {}\nMean Recall_- = {} +/- {}\n'
+          'Mean Precision = {} +/- {}\n Mean H_corr = {} +/- {} \nMean H_incorr = {} +/- {}\nMean AUPR_Success = {} +/- {}\n'
+          'Mean AUPR_Error = {} +/- {}'.
+          format(np.mean(all_auc), np.std(all_auc), np.mean(bacc), np.std(bacc), np.mean(recall[1]), np.std(recall[1]),
+                 np.mean(recall[0]), np.std(recall[0]), np.mean(precision), np.std(precision),
+                 H_pred_corr.mean(), H_pred_corr.std(), H_pred_incorr.mean(), H_pred_incorr.std(),
+                 np.mean(all_aupr_success), np.std(all_aupr_success), np.mean(all_aupr_error), np.std(all_aupr_error)))
 
 
 
