@@ -30,6 +30,7 @@ if __name__=="__main__":
     parser.add_argument("--bayesian", action='store_true', help="Whether to use dropout during test time or not")
     parser.add_argument("--nb_folds", type=int, default=5)
     parser.add_argument("--gamma_scheduler", type=float, required=True)
+    parser.add_argument("--step_size_scheduler", type=int, default=10)
     parser.add_argument("--pin_mem", type=bool, default=True)
     parser.add_argument("--drop_last", action="store_true")
     parser.add_argument("--db", choices=list(CONFIG['db'].keys()), required=True)

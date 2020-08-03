@@ -25,7 +25,7 @@ CONFIG = {
         'Adam': {'weight_decay': 5e-5}
     },
     'scheduler': {
-        'StepLR': {'step_size': 10}
+        'StepLR': {} # By default step_size = 10
     }
 }
 

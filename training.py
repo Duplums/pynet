@@ -26,7 +26,7 @@ class BaseTrainer():
 
         self.optimizer = torch.optim.Adam(self.net.parameters(), lr=args.lr, **CONFIG['optimizer']['Adam'])
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, gamma=args.gamma_scheduler,
-                                                         **CONFIG['scheduler']['StepLR'])
+                                                         step_size=args.step_size_scheduler)
 
         model_cls = SimCLR if args.model == "SimCLR" else Base
 
