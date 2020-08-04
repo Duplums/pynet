@@ -243,7 +243,7 @@ def add_spike(arr, n_spikes=1, intensity=(0.1, 1), seed=None):
     """ Add random MRI spike artifacts.
 
     Parameters
-    ----------
+    ----------q
     arr: array
         the input data.
     n_spikes: int, default 1
@@ -267,7 +267,7 @@ def add_spike(arr, n_spikes=1, intensity=(0.1, 1), seed=None):
     intensity_factor = np.random.uniform(
         low=intensity[0], high=intensity[1], size=1)[0]
     spectrum = np.fft.fftshift(np.fft.fftn(arr)).ravel()
-    indices = (spikes_positions * len(spectrum)).round().astype(int)
+    indices = np.floor(spikes_positions * len(spectrum)).astype(int)
     for index in indices:
         spectrum[index] = spectrum.max() * intensity_factor
     spectrum = spectrum.reshape(arr.shape)
