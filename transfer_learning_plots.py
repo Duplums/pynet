@@ -36,58 +36,66 @@ axes[0].scatter(0, 0.7914432989690722, marker='*', color='red', label='Baseline'
 axes[1].scatter(0, 0.7039690721649485, marker='*', color='red', label='Baseline')
 
 
-paths = ["self_supervision/simCLR/DenseNet/exp_1/block_outputs",
-         "scz_prediction/Benchmark_Transfer/Self_Supervision/schizconnect_vip/SimCLR_Exp1/block_outputs",
-         "self_supervision/simCLR/DenseNet/exp_2/block_outputs",
-         "scz_prediction/Benchmark_Transfer/Self_Supervision/schizconnect_vip/SimCLR_Exp2/DenseNet/block_outputs",
-         "regression_age_sex/Benchmark_IXI_HCP/DenseNet/Sex_Age/block_outputs",
-         "scz_prediction/Benchmark_Transfer/Sex_Age_Pretraining/schizconnect_vip/DenseNet/block_outputs",
-         "regression_age_sex/Benchmark_IXI_HCP/DenseNet/Age/block_outputs",
-         "scz_prediction/Benchmark_Transfer/Age_Pretraining/schizconnect_vip/DenseNet/block_outputs",
-         "self_supervision/simCLR/DenseNet/exp_3/all_DA/block_outputs",
-         "regression_age_sex/Benchmark_IXI_HCP/DenseNet/Dx/block_outputs"
-         ]
+paths = [
+    #          "self_supervision/simCLR/DenseNet/exp_1/block_outputs",
+    #          "scz_prediction/Benchmark_Transfer/Self_Supervision/schizconnect_vip/SimCLR_Exp1/block_outputs",
+    #          "self_supervision/simCLR/DenseNet/exp_2/block_outputs",
+    #          "scz_prediction/Benchmark_Transfer/Self_Supervision/schizconnect_vip/SimCLR_Exp2/DenseNet/block_outputs",
+    "regression_age_sex/Benchmark_IXI_HCP/DenseNet/Sex_Age/block_outputs",
+    "scz_prediction/Benchmark_Transfer/Sex_Age_Pretraining/schizconnect_vip/DenseNet/block_outputs",
+    "regression_age_sex/Benchmark_IXI_HCP/DenseNet/Age/block_outputs",
+    "scz_prediction/Benchmark_Transfer/Age_Pretraining/schizconnect_vip/DenseNet/block_outputs",
+    "self_supervision/simCLR/DenseNet/exp_3/noisy_spike_motion_crop_DA/block_outputs",
+    "scz_prediction/Benchmark_Transfer/Self_Supervision/schizconnect_vip/SimCLR_Exp3/noisy_spike_motion_crop_DA/block_outputs",
+    "regression_age_sex/Benchmark_IXI_HCP/DenseNet/Dx/block_outputs"
+]
 
-training_filenames = ["DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch99.pkl",
-                      "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch49.pkl",
-                      "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch10.pkl",
-                      "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch49.pkl",
+training_filenames = [
+                      # "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch99.pkl",
+                      # "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch49.pkl",
+                      # "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch10.pkl",
+                      # "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch49.pkl",
                       "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch99.pkl",
                       "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch49.pkl",
                       "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch99.pkl",
                       "DenseNet_Block{b}_Dx_SCZ_VIP_{f}_epoch49.pkl",
-                      "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch99.pkl",
+                      "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch199.pkl",
+                      "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch49.pkl",
                       "DenseNet_Block{b}_Dx_SCZ_VIP_{f}_epoch49.pkl"
                       ]
-testing_filenames = ["DenseNet_Block{b}_BSNIP_fold{f}_epoch99.pkl",
-                     "DenseNet_Block{b}_BSNIP_fold{f}_epoch49.pkl",
-                     "DenseNet_Block{b}_BSNIP_fold{f}_epoch10.pkl",
-                     "DenseNet_Block{b}_BSNIP_fold{f}_epoch49.pkl",
+testing_filenames = [
+                     # "DenseNet_Block{b}_BSNIP_fold{f}_epoch99.pkl",
+                     # "DenseNet_Block{b}_BSNIP_fold{f}_epoch49.pkl",
+                     # "DenseNet_Block{b}_BSNIP_fold{f}_epoch10.pkl",
+                     # "DenseNet_Block{b}_BSNIP_fold{f}_epoch49.pkl",
                      "DenseNet_Block{b}_BSNIP_fold{f}_epoch99.pkl",
                      "DenseNet_Block{b}_BSNIP_fold{f}_epoch49.pkl",
                      "DenseNet_Block{b}_BSNIP_fold{f}_epoch99.pkl",
                      "DenseNet_Block{b}_Dx_BSNIP_{f}_epoch49.pkl",
-                     "DenseNet_Block{b}_BSNIP_fold{f}_epoch99.pkl",
+                     "DenseNet_Block{b}_BSNIP_fold{f}_epoch199.pkl",
+                     "DenseNet_Block{b}_BSNIP_fold{f}_epoch49.pkl",
                      "DenseNet_Block{b}_Dx_BSNIP_{f}_epoch49.pkl"
                      ]
 
-exp_names = ["SimCLR\n (swap+flip+blur+motion+noise+spike)",
-             "SimCLR Transfer (1)",
-             "SimCLR\n (flip+blur+motion+noise+spike+ghosting)",
-             "SimCLR Transfer (2)",
+exp_names = [
+             # "SimCLR\n (swap+flip+blur+motion+noise+spike)",
+             # "SimCLR Transfer (1)",
+             # "SimCLR\n (flip+blur+motion+noise+spike+ghosting)",
+             # "SimCLR Transfer (2)",
              "Sex+Age",
              "Sex+Age Transfer",
              "Age",
              "Age Transfer",
              "Age Supervision SimCLR",
+             "SimCLR Transfer"
              "Trained on Dx",
              ]
-nb_folds = [1, 5, 1, 5, 1, 5, 1, 5, 1, 5]
-colors = ["blue", "green", "orange", "cyan", "red"]
+nb_folds = [1, 5, 1, 5, 1, 5, 5]
+colors = ["blue", "green", "orange", "red"]
 
 metrics = {'auc': {exp: {b: [] for b in blocks} for exp in exp_names},
            'balanced_accuracy': {exp: {b: [] for b in blocks} for exp in exp_names}}
-pca_fig, pca_axes = plt.subplots(len(paths)//2, len(blocks), figsize=(4*len(blocks), 4*len(paths)//2), squeeze=False)
+#pca_fig, pca_axes = plt.subplots(len(paths)//2, len(blocks), figsize=(4*len(blocks), 4*len(paths)//2), squeeze=False)
 for i, (path, train_file, test_file, exp) in enumerate(zip(paths, training_filenames, testing_filenames, exp_names)):
     for j, b in enumerate(blocks):
         for fold in range(nb_folds[i]):
@@ -103,13 +111,13 @@ for i, (path, train_file, test_file, exp) in enumerate(zip(paths, training_filen
                              np.array(testing_data['y_true']).ravel()
             y_pred = model.predict_proba(X_test)[:,1]
 
-            if fold == 0 and i%2 == 0:
-                plot_data_reduced(X_test, ['control' if y_t==0 else 'schizophrenia' for y_t in y_test],
-                                  ax=pca_axes[i//2,j])
-                if i==0:
-                    pca_axes[i//2,j].set_title(b)
-                if j==0:
-                    pca_axes[i//2,j].set_ylabel(exp)
+            # if fold == 0 and i%2 == 0:
+            #     plot_data_reduced(X_test, ['control' if y_t==0 else 'schizophrenia' for y_t in y_test],
+            #                       ax=pca_axes[i//2,j])
+            #     if i==0:
+            #         pca_axes[i//2,j].set_title(b)
+            #     if j==0:
+            #         pca_axes[i//2,j].set_ylabel(exp)
 
             metrics['auc'][exp][b].append(roc_auc_score(y_test, y_pred))
             metrics['balanced_accuracy'][exp][b].append(balanced_accuracy_score(y_test, y_pred>0.5))

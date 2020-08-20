@@ -8,10 +8,13 @@ import logging
 
 if __name__=="__main__":
 
+    logger = logging.getLogger("pynet")
+
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--input_path", type=str, default=CONFIG['input_path'])
-    parser.add_argument("--metadata_path", type=str, default=CONFIG['metadata_path'])
+    parser.add_argument("--preproc", type=str, default='cat12', choices=['cat12', 'quasi_raw'])
+    parser.add_argument("--input_path", type=str)
+    parser.add_argument("--metadata_path", type=str)
     parser.add_argument("--pretrained_path", type=str)
     parser.add_argument("--freeze_until_layer", type=str)
     parser.add_argument("--checkpoint_dir", type=str, default="/neurospin/psy_sbox/bd261576/checkpoints")
@@ -38,7 +41,7 @@ if __name__=="__main__":
     parser.add_argument("--model", choices=['base', 'SimCLR'], default='base')
     parser.add_argument("--labels", nargs='+', type=str, help="Label(s) to be predicted")
     parser.add_argument("--loss", type=str, choices=['BCE', 'l1', 'BCE_concrete_dropout', 'NTXenLoss', 'multi_l1_bce',
-                                                     'l1_sup_NTXenLoss'], required=True)
+                                                     'l1_sup_NTXenLoss', 'BCE_SBRLoss'], required=True)
     parser.add_argument("--folds", nargs='+', type=int, help="Fold indexes to run during the training")
     parser.add_argument("--stratify_label", type=str, help="Label used for the stratification of the train/val split")
     parser.add_argument("--with_visualization", action="store_true")
@@ -65,13 +68,18 @@ if __name__=="__main__":
                         help="What kind of test it will perform.")
 
     args = parser.parse_args()
-    logger = logging.getLogger("pynet")
+
+    if args.input_path is None or args.metadata_path is None:
+        args.input_path, args.metadata_path = CONFIG[args.preproc]['input_path'], CONFIG[args.preproc]['metadata_path']
+
+    logger.info('Path to data: %s\nPath to annotations: %s'%(args.input_path, args.metadata_path))
+
 
     if args.test_best_epoch is not None:
         assert args.test_best_epoch in (args.metrics or []), \
             "--test_best_epoch must be chosen in {}".format((args.metrics or []))
-        print("!!WARNING: For {}, it is assumed that the highest score is the best !!".format(args.test_best_epoch),
-              flush=True)
+        logger.warning("!!WARNING: For {}, it is assumed that the highest score is the best !!".
+                       format(args.test_best_epoch))
 
     if args.manual_seed:
         torch.manual_seed(args.manual_seed)

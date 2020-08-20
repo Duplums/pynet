@@ -1,4 +1,6 @@
-import socket
+import socket, re
+
+PREPROC = 'QUASI_RAW'
 
 CONFIG = {
     'db': {
@@ -26,14 +28,29 @@ CONFIG = {
     },
     'scheduler': {
         'StepLR': {} # By default step_size = 10
-    }
+    },
+    'cat12': {},
+    'quasi_raw': {}
 }
+# The paths depend on the platform/server
 
 if socket.gethostname() == 'kraken':
-    CONFIG['input_path'] = '/home_local/bd261576/all_t1mri_mwp1_gs-raw_data32_tocheck.npy'
-    CONFIG['metadata_path'] = '/home_local/bd261576/all_t1mri_mwp1_participants.tsv'
+    CONFIG['cat12']['input_path'] = '/home_local/bd261576/all_t1mri_mwp1_gs-raw_data32_tocheck.npy'
+    CONFIG['cat12']['metadata_path'] = '/home_local/bd261576/all_t1mri_mwp1_participants.tsv'
+    CONFIG['quasi_raw']['input_path'] = '/home_local/bd261576/all_t1mri_quasi_raw_data32.npy'
+    CONFIG['quasi_raw']['metadata_path'] = '/home_local/bd261576/all_t1mri_quasi_raw_participants.tsv'
+
+elif re.search("is[0-9]{6}", socket.gethostname()) is not None:
+    CONFIG['cat12']['input_path'] = '/neurospin/psy_sbox/analyses/201906_schizconnect-vip-prague-bsnip-biodb-icaar-start_assemble-all/' \
+                                    'data/cat12vbm/all_t1mri_mwp1_gs-raw_data32_tocheck.npy'
+    CONFIG['cat12']['metadata_path'] = '/neurospin/psy_sbox/analyses/201906_schizconnect-vip-prague-bsnip-biodb-icaar-start_assemble-all/' \
+                                       'data/cat12vbm/all_t1mri_mwp1_participants.tsv'
+    CONFIG['quasi_raw']['input_path'] = '/neurospin/psy_sbox/analyses/201906_schizconnect-vip-prague-bsnip-biodb-icaar-start_assemble-all/' \
+                                        'data/quasi_raw/all_t1mri_quasi_raw_data32.npy'
+    CONFIG['quasi_raw']['metadata_path'] = '/neurospin/psy_sbox/analyses/201906_schizconnect-vip-prague-bsnip-biodb-icaar-start_assemble-all/' \
+                                           'data/quasi_raw/all_t1mri_quasi_raw_participants.tsv'
 else:
-    CONFIG['input_path'] = '/neurospin/psy_sbox/analyses/201906_schizconnect-vip-prague-bsnip-biodb-icaar-start_assemble-all/' \
-                           'data/cat12vbm/all_t1mri_mwp1_gs-raw_data32_tocheck.npy'
-    CONFIG['metadata_path'] = '/neurospin/psy_sbox/analyses/201906_schizconnect-vip-prague-bsnip-biodb-icaar-start_assemble-all/' \
-                              'data/cat12vbm/all_t1mri_mwp1_participants.tsv'
+    CONFIG['cat12']['input_path'] = '/gpfsscratch/rech/lac/uoz16vf/data/all_t1mri_mwp1_gs-raw_data32_tocheck.npy'
+    CONFIG['cat12']['metadata_path'] = '/gpfsscratch/rech/lac/uoz16vf/data/all_t1mri_mwp1_participants.tsv'
+    CONFIG['quasi_raw']['input_path'] = '/gpfsscratch/rech/lac/uoz16vf/data/all_t1mri_quasi_raw_data32.npy'
+    CONFIG['quasi_raw']['metadata_path'] = '/gpfsscratch/rech/lac/uoz16vf/data/all_t1mri_quasi_raw_participants.tsv'

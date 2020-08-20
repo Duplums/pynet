@@ -77,7 +77,7 @@ class Bottleneck(nn.Module):
     expansion = 4
 
     def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1,
-                 base_width=64, dilation=1, norm_layer=None):
+                 base_width=64, dilation=1, concrete_dropout=False, norm_layer=None):
         super(Bottleneck, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -92,6 +92,8 @@ class Bottleneck(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
         self.stride = stride
+        if concrete_dropout:
+            self.concrete_dropout = SpatialConcreteDropout(self.conv3)
 
     def forward(self, x):
         identity = x
@@ -104,7 +106,10 @@ class Bottleneck(nn.Module):
         out = self.bn2(out)
         out = self.relu(out)
 
-        out = self.conv3(out)
+        if hasattr(self, "concrete_dropout"):
+            out = self.concrete_dropout(out)
+        else:
+            out = self.conv3(out)
         out = self.bn3(out)
 
         if self.downsample is not None:

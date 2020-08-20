@@ -462,4 +462,19 @@ def get_binary_classification_metrics(path, epochs_tested, folds_tested, MCTest=
                  np.mean(all_aupr_success), np.std(all_aupr_success), np.mean(all_aupr_error), np.std(all_aupr_error)))
 
 
+def get_regression_metrics(path, epochs_tested, folds_tested):
+    from sklearn.linear_model import LinearRegression
+    from scipy.stats import pearsonr
 
+    data =  [get_pickle_obj(path.format(fold=f, epoch=e)) for (f, e) in zip(folds_tested, epochs_tested)]
+    data = [(np.array(d['y_true']).reshape(-1, 1), np.array(d['y_pred']).reshape(-1, 1)) for d in data]
+
+    regs = [LinearRegression().fit(y_true, y_pred) for (y_true, y_pred) in data]
+    correlations = [pearsonr(y_pred.flatten(), y_true.flatten())[0] for (y_true, y_pred) in data]
+    MAEs = [np.mean(np.abs(y_pred - y_true)) for (y_true, y_pred) in data]
+    RMSEs = [np.sqrt(np.mean(np.abs(y_pred - y_true) ** 2)) for (y_true, y_pred) in data]
+    R2s = [reg.score(y_true, y_pred) for (reg, (y_true, y_pred)) in zip(regs, data)]
+    print('MAE = {} +/- {}\nRMSE = {} +/- {}\nR^2 = {} +/- {}\nr = {} +/- {}'.format(np.mean(MAEs), np.std(MAEs),
+                                                                                     np.mean(RMSEs), np.std(RMSEs),
+                                                                                     np.mean(R2s), np.std(R2s),
+                                                                                     np.mean(correlations), np.std(correlations)))

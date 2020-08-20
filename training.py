@@ -22,7 +22,7 @@ class BaseTrainer():
         self.manager = BaseTrainer.build_data_manager(args, input_transforms=
         [Crop((1, 121, 128, 121)), Padding([1, 128, 128, 128], mode='constant'),
          Normalize()])
-        self.loss = BaseTrainer.build_loss(args.loss, net=self.net)
+        self.loss = BaseTrainer.build_loss(args.loss, net=self.net, args=self.args)
 
         self.optimizer = torch.optim.Adam(self.net.parameters(), lr=args.lr, **CONFIG['optimizer']['Adam'])
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, gamma=args.gamma_scheduler,
@@ -55,7 +55,7 @@ class BaseTrainer():
         return train_history, valid_history
 
     @staticmethod
-    def build_loss(name, net=None):
+    def build_loss(name, net=None, args=None):
         if name == 'l1':
             loss = nn.L1Loss()
         elif name == 'BCE':
@@ -69,6 +69,9 @@ class BaseTrainer():
             loss = MultiTaskLoss([nn.L1Loss(), nn.BCEWithLogitsLoss()], weights=[1, 1])
         elif name == "l1_sup_NTXenLoss": # Mainly for supervised SimCLR
             loss = SupervisedNTXenLoss(supervised_loss=nn.L1Loss(), alpha=1, temperature=0.1, return_logits=True)
+        elif name == "BCE_SBRLoss": # BCE + a regularization term based on Sample-Based reg loss
+            loss = SBRLoss(net, nn.BCEWithLogitsLoss(), "features", num_classes=args.num_classes,
+                           device=('cuda' if args.cuda else 'cpu'))
         else:
             raise ValueError("Loss not yet implemented")
             # loss = SSIM()
@@ -89,11 +92,11 @@ class BaseTrainer():
         elif name == "light_resnet34":
             net = resnet34(pretrained=False, num_classes=num_classes, initial_kernel_size=3, **kwargs)
         elif name == "resnet50":
-            net = resnet50(pretrained=False, num_classes=num_classes, **kwargs)
+            net = resnet50(pretrained=False, num_classes=num_classes, concrete_dropout=args.concrete_dropout, **kwargs)
         elif name == "resnext50":
             net = resnext50_32x4d(pretrained=False, num_classes=num_classes, **kwargs)
         elif name == "resnet101":
-            net = resnet101(pretrained=False, num_classes=num_classes, **kwargs)
+            net = resnet101(pretrained=False, num_classes=num_classes, concrete_dropout=args.concrete_dropout, **kwargs)
         elif name == "vgg11":
             net = vgg11(num_classes=num_classes, init_weights=True, dim="3d", **kwargs)
         elif name == "vgg16":
@@ -170,11 +173,18 @@ class BaseTrainer():
 
         ## Set the preprocessing step with an exception for GAN
         if input_transforms is None:
-            if args.net == "alpha_wgan":
-                input_transforms = [Crop((1, 121, 128, 121)), Padding([1, 128, 128, 128], mode='constant'),
-                                    HardNormalization()]
-            else:
-                input_transforms = [Crop((1, 121, 128, 121)), Padding([1, 128, 128, 128], mode='constant'), Normalize()]
+            if args.preproc == 'cat12': # Size [121 x 145 x 121]
+                if args.net == "alpha_wgan":
+                    input_transforms = [Crop((1, 121, 128, 121)), Padding([1, 128, 128, 128], mode='constant'),
+                                        HardNormalization()]
+                else:
+                    input_transforms = [Crop((1, 121, 128, 121)), Padding([1, 128, 128, 128], mode='constant'), Normalize()]
+            elif args.preproc == 'quasi_raw': # Size [182 x 218 x 182]
+                if args.net == "alpha_wgan":
+                    input_transforms = [HardNormalization()]
+                else:
+                    input_transforms = [Normalize()]
+
 
         ## Set the basic mapping between a label and an integer
 

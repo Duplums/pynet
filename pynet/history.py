@@ -178,6 +178,7 @@ class History(object):
         if drop_last:
             for m in length_per_fold:
                 if len(length_per_fold[m]) > 0:
+                    print(length_per_fold[m][:-1], length_per_fold[m][0])
                     assert np.all(length_per_fold[m][:-1] == length_per_fold[m][0])
                     if not np.all(length_per_fold[m] == length_per_fold[m][0]):
                         del this_dict[m][-1]

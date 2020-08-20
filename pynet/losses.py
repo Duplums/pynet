@@ -83,7 +83,6 @@ class NTXenLoss(nn.Module):
 
         return (loss_i + loss_j)
 
-
 class SupervisedNTXenLoss(nn.Module):
 
     def __init__(self, supervised_loss, alpha=0.1, **kwargs):
@@ -106,6 +105,56 @@ class SupervisedNTXenLoss(nn.Module):
 
     def get_aux_losses(self):
         return {'MAE': self.sup_val}
+
+
+class SBRLoss(nn.Module):
+    """
+    Refer to paper:
+    Yunho Jeon, Yongseok Choi, Jaesun Park, Subin Yi, Dong-Yeon Cho, and Jiwon Kim
+    Sample-based Regularization: A Transfer Learning Strategy Toward Better Generalization, arXiv 2020
+    """
+
+    def __init__(self, model, sup_loss, feature_extractor, num_classes, distance="euclidean", beta=1e-5, device='cuda'):
+        super().__init__()
+        assert distance in ["euclidean", "cosinus"], "Unknown distance: %s"%distance
+
+        self.model = model
+        self.output_features = None
+        self.num_classes = num_classes
+        self.distance = distance
+        self.supervised_loss = sup_loss
+        self.beta = beta
+        self.device=device
+
+        for name, layer in self.model.named_modules():
+            if feature_extractor == name:
+                layer.register_forward_hook(self.set_output_features)
+
+    def set_output_features(self, module, input, output):
+        self.output_features = output
+
+    def forward(self, outputs, targets):
+        assert len(self.output_features) == len(targets), "Inconsistent number of samples in the batch " \
+                                                         "(%i samples from output features, %i samples from labels)"%\
+                                                         (len(self.output_features), len(targets))
+        sup_loss = self.supervised_loss(outputs, targets)
+
+        b = targets.size(0)
+        z = self.output_features.view(b, -1)
+        if self.distance == "cosinus":
+            z = func.normalize(z, p=2, dim=-1)  # dim [b, f]
+            distmat = 1 - z @ z.T # dim [b, b]
+        elif self.distance == "euclidean":
+            distmat = z.pow(2).sum(dim=1, keepdim=True).expand(b, b).clone()
+            distmat += distmat.T - 2 *  z @ z.T # dim [b, b]
+
+        targets = targets.unsqueeze(1).unsqueeze(1).expand(b, b, self.num_classes)
+        classes = torch.arange(self.num_classes).expand(b, b, self.num_classes).to(self.device)
+        mask = targets.eq(classes) & targets.transpose(0,1).eq(classes.transpose(0,1)) # dim [b, b, num_classes]
+
+        reg_loss = (distmat.unsqueeze(-1).expand(b, b, self.num_classes) * mask).sum() / (2.0 * b)
+
+        return sup_loss + self.beta * reg_loss
 
 
 class LGMLoss(nn.Module):

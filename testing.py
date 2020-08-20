@@ -14,7 +14,7 @@ class BaseTester():
         self.args = args
         self.net = BaseTrainer.build_network(args.net, args.num_classes, args, in_channels=1)
         self.manager = BaseTrainer.build_data_manager(args)
-        self.loss = BaseTrainer.build_loss(args.loss, net=self.net)
+        self.loss = BaseTrainer.build_loss(args.loss, net=self.net, args=self.args)
         self.logger = logging.getLogger("pynet")
 
         if self.args.pretrained_path and self.manager.number_of_folds > 1:
@@ -22,7 +22,8 @@ class BaseTester():
 
     def run(self):
         epochs_tested = self.get_epochs_to_test()
-        for fold in range(self.manager.number_of_folds):
+        folds_to_test = self.get_folds_to_test()
+        for fold in folds_to_test:
             for epoch in epochs_tested[fold]:
                 pretrained_path = self.args.pretrained_path or \
                                   os.path.join(self.args.checkpoint_dir, get_chk_name(self.args.exp_name, fold, epoch))
@@ -39,7 +40,13 @@ class BaseTester():
                                     saving_dir=self.args.checkpoint_dir,
                                     exp_name=exp_name,
                                     standard_optim=getattr(self.net, 'std_optim', True))
-
+    
+    def get_folds_to_test(self):
+        if self.args.folds is not None and len(self.args.folds) > 0:
+            folds = self.args.folds
+        else:
+            folds = list(range(self.manager.number_of_folds))
+        return folds
 
     def get_epochs_to_test(self):
         if self.args.test_all_epochs:
@@ -81,10 +88,10 @@ class AlphaWGANTester(BaseTester):
 
 class BayesianTester(BaseTester):
 
-    def run(self, MC=10):
+    def run(self, MC=1):
         epochs_tested = self.get_epochs_to_test()
-
-        for fold in range(self.manager.number_of_folds):
+        folds_to_test = self.get_folds_to_test()
+        for fold in folds_to_test:
             for epoch in epochs_tested[fold]:
                 pretrained_path = self.args.pretrained_path or \
                                   os.path.join(self.args.checkpoint_dir, get_chk_name(self.args.exp_name, fold, epoch))
@@ -104,8 +111,8 @@ class EnsemblingTester(BaseTester):
         if self.args.pretrained_path is not None:
             raise ValueError('Unset <pretrained_path> to use the EnsemblingTester')
         epochs_tested = self.get_epochs_to_test()
-
-        for fold in range(self.manager.number_of_folds):
+        folds_to_test = self.get_folds_to_test()
+        for fold in folds_to_test:
             for epoch in epochs_tested[fold]:
                 Y, Y_true = [], []
                 for i in range(nb_rep):
@@ -127,6 +134,7 @@ class RobustnessTester(BaseTester):
 
     def run(self):
         epochs_tested = [[self.args.nb_epochs - 1] for _ in range(self.manager.number_of_folds)]
+        folds_to_test = self.get_folds_to_test()
         std_noise = [0, 0.05, 0.1, 0.15, 0.20]
         nb_repetitions = 5 # nb of repetitions per Gaussian Noise
 
@@ -136,7 +144,7 @@ class RobustnessTester(BaseTester):
                     [Crop((1, 121, 128, 121)), Padding([1, 128, 128, 128], mode='constant'),
                      Normalize(), GaussianNoise(sigma)])
             for _ in range(nb_repetitions):
-                for fold in range(self.manager.number_of_folds):
+                for fold in folds_to_test:
                     for epoch in epochs_tested[fold]:
                         pretrained_path = self.args.pretrained_path or \
                                           os.path.join(self.args.checkpoint_dir, get_chk_name(self.args.exp_name, fold, epoch))
