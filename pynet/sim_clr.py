@@ -93,7 +93,6 @@ class SimCLR(Base):
             pbar.update()
             inputs = dataitem.inputs.to(self.device)
             labels = dataitem.labels.to(self.device) if dataitem.labels is not None else None
-
             self.optimizer.zero_grad()
             z_i = self.model(inputs[:,0,:])
             z_j = self.model(inputs[:,1,:])

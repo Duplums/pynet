@@ -122,7 +122,7 @@ class DenseNet(nn.Module):
                  bayesian=False, concrete_dropout=False, out_block=None, memory_efficient=False):
 
         super(DenseNet, self).__init__()
-
+        self.input_imgs = None
         # First convolution
         self.features = nn.Sequential(OrderedDict([
             ('conv0', nn.Conv3d(in_channels, num_init_features, kernel_size=7, stride=2,
@@ -181,6 +181,7 @@ class DenseNet(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
+        self.input_imgs = x.detach().cpu().numpy()
         features = self.features(x)
         if self.out_block is None:
             out = F.relu(features, inplace=True)
@@ -209,6 +210,9 @@ class DenseNet(nn.Module):
             out = torch.cat([out, self.classifier(out)], dim=1)
 
         return out.squeeze(dim=1)
+
+    def get_current_visuals(self):
+        return self.input_imgs
 
 
 def _load_state_dict(model, model_url, progress):

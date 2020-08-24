@@ -19,9 +19,7 @@ class BaseTrainer():
     def __init__(self, args):
         self.args = args
         self.net = BaseTrainer.build_network(args.net, args.num_classes, args, in_channels=1)
-        self.manager = BaseTrainer.build_data_manager(args, input_transforms=
-        [Crop((1, 121, 128, 121)), Padding([1, 128, 128, 128], mode='constant'),
-         Normalize()])
+        self.manager = BaseTrainer.build_data_manager(args)
         self.loss = BaseTrainer.build_loss(args.loss, net=self.net, args=self.args)
 
         self.optimizer = torch.optim.Adam(self.net.parameters(), lr=args.lr, **CONFIG['optimizer']['Adam'])
@@ -185,7 +183,6 @@ class BaseTrainer():
                 else:
                     input_transforms = [Normalize()]
 
-
         ## Set the basic mapping between a label and an integer
 
         # <label>: [LabelMapping(), IsCategorical]
@@ -225,7 +222,7 @@ class BaseTrainer():
                               number_of_folds=args.nb_folds,
                               add_to_input=add_to_input,
                               add_input=args.add_input,
-                              labels=labels,
+                              labels=labels or None,
                               sampler=args.sampler,
                               projection_labels=projection_labels,
                               custom_stratification=stratif,

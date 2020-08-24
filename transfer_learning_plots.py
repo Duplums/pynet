@@ -41,56 +41,60 @@ paths = [
     #          "scz_prediction/Benchmark_Transfer/Self_Supervision/schizconnect_vip/SimCLR_Exp1/block_outputs",
     #          "self_supervision/simCLR/DenseNet/exp_2/block_outputs",
     #          "scz_prediction/Benchmark_Transfer/Self_Supervision/schizconnect_vip/SimCLR_Exp2/DenseNet/block_outputs",
-    "regression_age_sex/Benchmark_IXI_HCP/DenseNet/Sex_Age/block_outputs",
-    "scz_prediction/Benchmark_Transfer/Sex_Age_Pretraining/schizconnect_vip/DenseNet/block_outputs",
-    "regression_age_sex/Benchmark_IXI_HCP/DenseNet/Age/block_outputs",
-    "scz_prediction/Benchmark_Transfer/Age_Pretraining/schizconnect_vip/DenseNet/block_outputs",
-    "self_supervision/simCLR/DenseNet/exp_3/noisy_spike_motion_crop_DA/block_outputs",
-    "scz_prediction/Benchmark_Transfer/Self_Supervision/schizconnect_vip/SimCLR_Exp3/noisy_spike_motion_crop_DA/block_outputs",
-    "regression_age_sex/Benchmark_IXI_HCP/DenseNet/Dx/block_outputs"
+    # "regression_age_sex/Benchmark_IXI_HCP/DenseNet/Sex_Age/block_outputs",
+    # "scz_prediction/Benchmark_Transfer/Sex_Age_Pretraining/schizconnect_vip/DenseNet/block_outputs",
+    # "regression_age_sex/Benchmark_IXI_HCP/DenseNet/Age/block_outputs",
+    # "scz_prediction/Benchmark_Transfer/Age_Pretraining/schizconnect_vip/DenseNet/block_outputs",
+    # "self_supervision/simCLR/DenseNet/exp_3/noisy_spike_motion_crop_DA/block_outputs",
+    # "scz_prediction/Benchmark_Transfer/Self_Supervision/schizconnect_vip/SimCLR_Exp3/noisy_spike_motion_crop_DA/block_outputs",
+    # "regression_age_sex/Benchmark_IXI_HCP/DenseNet/Dx/block_outputs"
+    "self_supervision/simCLR/DenseNet/exp_3/noisy_spike_motion_crop_DA/unsupervised/block_outputs"
 ]
 
 training_filenames = [
-                      # "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch99.pkl",
-                      # "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch49.pkl",
-                      # "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch10.pkl",
-                      # "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch49.pkl",
-                      "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch99.pkl",
-                      "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch49.pkl",
-                      "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch99.pkl",
-                      "DenseNet_Block{b}_Dx_SCZ_VIP_{f}_epoch49.pkl",
-                      "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch199.pkl",
-                      "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch49.pkl",
-                      "DenseNet_Block{b}_Dx_SCZ_VIP_{f}_epoch49.pkl"
-                      ]
+    # "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch99.pkl",
+    # "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch49.pkl",
+    # "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch10.pkl",
+    # "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch49.pkl",
+    # "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch99.pkl",
+    # "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch49.pkl",
+    # "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch99.pkl",
+    # "DenseNet_Block{b}_Dx_SCZ_VIP_{f}_epoch49.pkl",
+    # "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch199.pkl",
+    # "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch49.pkl",
+    # "DenseNet_Block{b}_Dx_SCZ_VIP_{f}_epoch49.pkl"
+    "DenseNet_Block{b}_SCZ_VIP_fold{f}_epoch299.pkl"
+]
 testing_filenames = [
-                     # "DenseNet_Block{b}_BSNIP_fold{f}_epoch99.pkl",
-                     # "DenseNet_Block{b}_BSNIP_fold{f}_epoch49.pkl",
-                     # "DenseNet_Block{b}_BSNIP_fold{f}_epoch10.pkl",
-                     # "DenseNet_Block{b}_BSNIP_fold{f}_epoch49.pkl",
-                     "DenseNet_Block{b}_BSNIP_fold{f}_epoch99.pkl",
-                     "DenseNet_Block{b}_BSNIP_fold{f}_epoch49.pkl",
-                     "DenseNet_Block{b}_BSNIP_fold{f}_epoch99.pkl",
-                     "DenseNet_Block{b}_Dx_BSNIP_{f}_epoch49.pkl",
-                     "DenseNet_Block{b}_BSNIP_fold{f}_epoch199.pkl",
-                     "DenseNet_Block{b}_BSNIP_fold{f}_epoch49.pkl",
-                     "DenseNet_Block{b}_Dx_BSNIP_{f}_epoch49.pkl"
-                     ]
+    # "DenseNet_Block{b}_BSNIP_fold{f}_epoch99.pkl",
+    # "DenseNet_Block{b}_BSNIP_fold{f}_epoch49.pkl",
+    # "DenseNet_Block{b}_BSNIP_fold{f}_epoch10.pkl",
+    # "DenseNet_Block{b}_BSNIP_fold{f}_epoch49.pkl",
+    # "DenseNet_Block{b}_BSNIP_fold{f}_epoch99.pkl",
+    # "DenseNet_Block{b}_BSNIP_fold{f}_epoch49.pkl",
+    # "DenseNet_Block{b}_BSNIP_fold{f}_epoch99.pkl",
+    # "DenseNet_Block{b}_Dx_BSNIP_{f}_epoch49.pkl",
+    # "DenseNet_Block{b}_BSNIP_fold{f}_epoch199.pkl",
+    # "DenseNet_Block{b}_BSNIP_fold{f}_epoch49.pkl",
+    # "DenseNet_Block{b}_Dx_BSNIP_{f}_epoch49.pkl"
+    "DenseNet_Block{b}_BSNIP_fold{f}_epoch299.pkl"
+]
 
 exp_names = [
              # "SimCLR\n (swap+flip+blur+motion+noise+spike)",
              # "SimCLR Transfer (1)",
              # "SimCLR\n (flip+blur+motion+noise+spike+ghosting)",
              # "SimCLR Transfer (2)",
-             "Sex+Age",
-             "Sex+Age Transfer",
-             "Age",
-             "Age Transfer",
-             "Age Supervision SimCLR",
-             "SimCLR Transfer"
-             "Trained on Dx",
+             # "Sex+Age",
+             # "Sex+Age Transfer",
+             # "Age",
+             # "Age Transfer",
+             # "Age Supervision SimCLR",
+             # "SimCLR Transfer"
+             # "Trained on Dx",
+    "SimCLR"
              ]
-nb_folds = [1, 5, 1, 5, 1, 5, 5]
+nb_folds = [1]#[1, 5, 1, 5, 1, 5, 5]
 colors = ["blue", "green", "orange", "red"]
 
 metrics = {'auc': {exp: {b: [] for b in blocks} for exp in exp_names},
