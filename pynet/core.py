@@ -263,6 +263,7 @@ class Base(Observable):
             for dataitem in loader:
                 pbar.update()
                 inputs = dataitem.inputs.to(self.device)
+                print(inputs.shape, flush=True)
                 list_targets = []
                 _targets = []
                 for item in (dataitem.outputs, dataitem.labels):

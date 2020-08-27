@@ -171,17 +171,19 @@ class BaseTrainer():
 
         ## Set the preprocessing step with an exception for GAN
         if input_transforms is None:
-            if args.preproc == 'cat12': # Size [121 x 145 x 121]
+            if args.preproc == 'cat12': # Size [121 x 145 x 121], 1.5mm3
                 if args.net == "alpha_wgan":
                     input_transforms = [Crop((1, 121, 128, 121)), Padding([1, 128, 128, 128], mode='constant'),
                                         HardNormalization()]
                 else:
                     input_transforms = [Crop((1, 121, 128, 121)), Padding([1, 128, 128, 128], mode='constant'), Normalize()]
-            elif args.preproc == 'quasi_raw': # Size [182 x 218 x 182]
+            elif args.preproc == 'quasi_raw': # Size [182 x 218 x 182], 1mm³ (rescale 1/1.5 to resample at 1.5mm³)
                 if args.net == "alpha_wgan":
-                    input_transforms = [HardNormalization()]
+                    input_transforms = [Rescale(1/1.5), Crop((1, 121, 128, 121)), Padding([1, 128, 128, 128], mode='constant'),
+                                        HardNormalization()]
                 else:
-                    input_transforms = [Normalize()]
+                    input_transforms = [Rescale(1/1.5), Crop((1, 121, 128, 121)), Padding([1, 128, 128, 128], mode='constant'),
+                                        Normalize()]
 
         ## Set the basic mapping between a label and an integer
 

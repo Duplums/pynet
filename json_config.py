@@ -40,7 +40,7 @@ if socket.gethostname() == 'kraken':
     CONFIG['quasi_raw']['input_path'] = '/home_local/bd261576/all_t1mri_quasi_raw_data32.npy'
     CONFIG['quasi_raw']['metadata_path'] = '/home_local/bd261576/all_t1mri_quasi_raw_participants.tsv'
 
-elif re.search("is[0-9]{6}", socket.gethostname()) is not None:
+elif re.search("is[0-9]{6}", socket.gethostname()) is not None or socket.gethostname()=='triscotte':
     CONFIG['cat12']['input_path'] = '/neurospin/psy_sbox/analyses/201906_schizconnect-vip-prague-bsnip-biodb-icaar-start_assemble-all/' \
                                     'data/cat12vbm/all_t1mri_mwp1_gs-raw_data32_tocheck.npy'
     CONFIG['cat12']['metadata_path'] = '/neurospin/psy_sbox/analyses/201906_schizconnect-vip-prague-bsnip-biodb-icaar-start_assemble-all/' \

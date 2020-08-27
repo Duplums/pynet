@@ -210,6 +210,24 @@ class Crop(object):
             return sk_tf.resize(arr[tuple(indexes)], img_shape, preserve_range=True)
         return arr[tuple(indexes)]
 
+class Resize(object):
+
+    def __init__(self, output_shape, **kwargs):
+        self.kwargs = kwargs
+        self.output_shape = output_shape
+
+    def __call__(self, arr):
+        return sk_tf.resize(arr, self.output_shape, **self.kwargs)
+
+class Rescale(object):
+
+    def __init__(self, scale, **kwargs):
+        self.kwargs = kwargs
+        self.scale = scale
+
+    def __call__(self, arr):
+        return sk_tf.rescale(arr, self.scale, **self.kwargs)
+
 class GaussianNoise:
     def __init__(self, std=0.1):
         self.std = std

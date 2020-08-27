@@ -150,11 +150,11 @@ plt.savefig('densenet_hidden_representations.png')
 
 ### Plots the AUC for different pretrainings as a function of the number of blocks frozen
 fig, ax = plt.subplots(1,1, figsize=(5,5))
-blocks = ["None", "Block1", "Block2", "Block3", "Block4"]
+blocks = [ "Block1", "Block2", "Block3", "Block4"]
 root = "/neurospin/psy_sbox/bd261576/checkpoints/scz_prediction/Benchmark_Transfer"
 pretrainings = ["No_Pretraining", "Age_Pretraining", "Sex_Pretraining", "Sex_Age_Pretraining", "Self_Supervision"]
-exp_names = ["Random", "Age Init", "Sex Init", "Age+Sex Init", "SimCLR Init"]
-settings = ["", "", "", "", "SimCLR_Exp2"]
+exp_names = ["Random", "Age Init", "Sex Init", "Age+Sex Init", "Age Sup. SimCLR Init"]
+settings = ["DenseNet", "DenseNet", "DenseNet", "DenseNet", "SimCLR_Exp3/noisy_spike_motion_crop_DA/age_supervision"]
 db = "schizconnect_vip"
 network = "DenseNet"
 
@@ -164,7 +164,7 @@ ax.plot(range(len(blocks)), len(blocks)*[0.7914432989690722], linestyle="--", co
 metrics = {exp: {b: dict() for b in blocks} for exp in exp_names}
 for (exp_name, pretraining, setting) in zip(exp_names, pretrainings, settings):
     for block in blocks:
-        path = os.path.join(root, pretraining, db, setting, network)
+        path = os.path.join(root, pretraining, db, setting)
         if block == "None":
             tests = [get_pickle_obj(os.path.join(path, "Test_DenseNet_Dx_SCZ_VIP_fold{k}_epoch49.pkl".format(k=k)))
                      for k in range(5)]
