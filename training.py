@@ -8,6 +8,7 @@ from pynet.losses import *
 from pynet.models.colenet import ColeNet
 from pynet.models.psynet import PsyNet
 from pynet.models.alpha_wgan import *
+from pynet.augmentation import *
 import pandas as pd
 import re
 from json_config import CONFIG
@@ -151,11 +152,48 @@ class BaseTrainer():
         return net
 
     @staticmethod
+    def get_data_augmentations(augmentations):
+        if augmentations is None or len(augmentations) == 0:
+            return None
+        # transformations = [
+        #     original_img,
+        #     flip(original_img, axis=0),
+        #     add_blur(original_img, sigma=1),
+        #     add_noise(original_img, sigma=0.2),
+        #     Crop((85, 101, 85), "random", resize=True)(original_img),
+        #     affine(original_img, rotation=10, translation=0, zoom=0),
+        #     add_ghosting(original_img, intensity=1, n_ghosts=5, axis=0),
+        #     add_motion(original_img, rotation=40, translation=20),
+        #     add_spike(original_img, intensity=1, n_spikes=20),
+        #     add_biasfield(original_img, coefficients=0.7),
+        #     add_swap(original_img, num_iterations=20)
+        # ]
+
+        aug2tf = {
+            'flip': (flip, dict()),
+            'blur': (add_blur, {'sigma':(0.1, 1)}),
+            'noise': (add_noise, {'sigma': (0.1, 0.5)}),
+            'resized_crop': (Crop((85, 101, 85), "random", resize=True), dict()),
+            'affine': (affine, {'rotation': 40, 'translation': 20, 'zoom': 0.2}),
+            'ghosting': (add_ghosting, {'intensity': 1, 'axis': 0}),
+            'motion': (add_motion, {'n_transforms': 3, 'rotation': 40, 'translation': 10}),
+            'spike': (add_spike, {'n_spikes': 10, 'intensity': 1}),
+            'biasfield': (add_biasfield, {'coefficients': 0.7}),
+            'swap': (add_swap, {'num_iterations': 20})
+
+        }
+        compose_transforms = Transformer()
+        for aug in augmentations:
+            compose_transforms.register(aug2tf[aug][0], probability=0.5, **aug2tf[aug][1])
+        return [compose_transforms]
+
+
+    @staticmethod
     def build_data_manager(args, **kwargs):
         df = pd.read_csv(args.metadata_path, sep='\t')
         labels = args.labels or []
         add_to_input = None
-        data_augmentation = [RandomFlip(hflip=True, vflip=True)] if 'flip' in args.da else None
+        data_augmentation = BaseTrainer.get_data_augmentations(args.da)
         self_supervision = None  # RandomPatchInversion(patch_size=15, data_threshold=0)
         input_transforms = kwargs.get('input_transforms')
         output_transforms = None

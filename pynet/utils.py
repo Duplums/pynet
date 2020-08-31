@@ -420,7 +420,7 @@ def tensor2im(tensor):
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-def get_binary_classification_metrics(path, epochs_tested, folds_tested, MCTest=False, Ensembling=False):
+def get_binary_classification_metrics(path, epochs_tested, folds_tested, MCTest=False, Ensembling=False, display=True):
 
     assert len(epochs_tested) == len(folds_tested), "Invalid nb of epochs or folds"
 
@@ -453,16 +453,19 @@ def get_binary_classification_metrics(path, epochs_tested, folds_tested, MCTest=
     recall = [[m[i, i] / m[i, :].sum() for m in all_confusion_matrix] for i in range(2)]
     precision = [m[1, 1] / m[:, 1].sum() for m in all_confusion_matrix]
     bacc = [balanced_accuracy_score(t['y_true'], np.array(t['y_pred']) > 0.5) for t in test_results]
-    print('Mean AUC= {} +/- {} \nMean Balanced Acc = {} +/- {}\nMean Recall_+ = {} +/- {}\nMean Recall_- = {} +/- {}\n'
-          'Mean Precision = {} +/- {}\n Mean H_corr = {} +/- {} \nMean H_incorr = {} +/- {}\nMean AUPR_Success = {} +/- {}\n'
-          'Mean AUPR_Error = {} +/- {}'.
-          format(np.mean(all_auc), np.std(all_auc), np.mean(bacc), np.std(bacc), np.mean(recall[1]), np.std(recall[1]),
-                 np.mean(recall[0]), np.std(recall[0]), np.mean(precision), np.std(precision),
-                 H_pred_corr.mean(), H_pred_corr.std(), H_pred_incorr.mean(), H_pred_incorr.std(),
-                 np.mean(all_aupr_success), np.std(all_aupr_success), np.mean(all_aupr_error), np.std(all_aupr_error)))
+    if display:
+        print('Mean AUC= {} +/- {} \nMean Balanced Acc = {} +/- {}\nMean Recall_+ = {} +/- {}\nMean Recall_- = {} +/- {}\n'
+              'Mean Precision = {} +/- {}\n Mean H_corr = {} +/- {} \nMean H_incorr = {} +/- {}\nMean AUPR_Success = {} +/- {}\n'
+              'Mean AUPR_Error = {} +/- {}'.
+              format(np.mean(all_auc), np.std(all_auc), np.mean(bacc), np.std(bacc), np.mean(recall[1]), np.std(recall[1]),
+                     np.mean(recall[0]), np.std(recall[0]), np.mean(precision), np.std(precision),
+                     H_pred_corr.mean(), H_pred_corr.std(), H_pred_incorr.mean(), H_pred_incorr.std(),
+                     np.mean(all_aupr_success), np.std(all_aupr_success), np.mean(all_aupr_error), np.std(all_aupr_error)))
+    return dict(auc=all_auc, bacc=bacc, recall_pos=recall[1], recall_neg=recall[0], precision=precision,
+                aupr_success=all_aupr_success, aupr_error=all_aupr_error)
 
 
-def get_regression_metrics(path, epochs_tested, folds_tested):
+def get_regression_metrics(path, epochs_tested, folds_tested, display=True):
     from sklearn.linear_model import LinearRegression
     from scipy.stats import pearsonr
 
@@ -474,7 +477,9 @@ def get_regression_metrics(path, epochs_tested, folds_tested):
     MAEs = [np.mean(np.abs(y_pred - y_true)) for (y_true, y_pred) in data]
     RMSEs = [np.sqrt(np.mean(np.abs(y_pred - y_true) ** 2)) for (y_true, y_pred) in data]
     R2s = [reg.score(y_true, y_pred) for (reg, (y_true, y_pred)) in zip(regs, data)]
-    print('MAE = {} +/- {}\nRMSE = {} +/- {}\nR^2 = {} +/- {}\nr = {} +/- {}'.format(np.mean(MAEs), np.std(MAEs),
-                                                                                     np.mean(RMSEs), np.std(RMSEs),
-                                                                                     np.mean(R2s), np.std(R2s),
-                                                                                     np.mean(correlations), np.std(correlations)))
+    if display:
+        print('MAE = {} +/- {}\nRMSE = {} +/- {}\nR^2 = {} +/- {}\nr = {} +/- {}'.format(np.mean(MAEs), np.std(MAEs),
+                                                                                         np.mean(RMSEs), np.std(RMSEs),
+                                                                                         np.mean(R2s), np.std(R2s),
+                                                                                         np.mean(correlations), np.std(correlations)))
+    return dict(mae=MAEs, rmse=RMSEs, R2=R2s, r=correlations)

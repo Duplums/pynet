@@ -24,7 +24,8 @@ if __name__=="__main__":
                                                                       "to be used per fold")
     parser.add_argument("--nb_epochs_per_saving", type=int, default=5)
     parser.add_argument("--num_classes", type=int, default=1)
-    parser.add_argument("--da", type=str, nargs='+', default=[], choices=['flip'])
+    parser.add_argument("--da", type=str, nargs='+', default=[], choices=['flip', 'blur', 'noise', 'resized_crop',
+                                                                          'affine', 'ghosting', 'motion', 'spike', 'biasfield', 'swap'])
     parser.add_argument("--manual_seed", type=int, help="The manual seed to give to pytorch.")
     parser.add_argument("-b", "--batch_size", type=int, required=True)
     parser.add_argument("--dropout", type=float, default=0, help="Dropout rate to use thoughout the network. "

@@ -56,9 +56,10 @@ class HardNormalization(object):
         return ((self.max-self.min) * arr + (self.min*max_arr - self.max*min_arr))/(max_arr-min_arr)
 
 class RandomFlip(object):
-    def __init__(self, vflip=False, hflip=True, proba=0.5):
+    def __init__(self, vflip=False, hflip=True, dflip=True, proba=0.5):
         self.vflip = vflip
         self.hflip = hflip
+        self.dflip = dflip
         self.prob = proba
 
     def __call__(self, arr):
@@ -66,6 +67,8 @@ class RandomFlip(object):
             arr = np.flip(arr, axis=[2])
         if self.hflip and np.random.rand() < self.prob:
             arr = np.flip(arr, axis=[1])
+        if self.dflip and np.random.rand() < self.prob:
+            arr = np.flip(arr, axis=[0])
         return arr.copy()
 
 class RandomPatchInversion(object):
