@@ -35,6 +35,7 @@ if __name__=="__main__":
     parser.add_argument("--nb_folds", type=int, default=5)
     parser.add_argument("--gamma_scheduler", type=float, required=True)
     parser.add_argument("--step_size_scheduler", type=int, default=10)
+    parser.add_argument("--weight_decay", type=float)
     parser.add_argument("--pin_mem", type=bool, default=True)
     parser.add_argument("--drop_last", action="store_true")
     parser.add_argument("--db", choices=list(CONFIG['db'].keys()), required=True)
@@ -72,9 +73,10 @@ if __name__=="__main__":
 
     if args.input_path is None or args.metadata_path is None:
         args.input_path, args.metadata_path = CONFIG[args.preproc]['input_path'], CONFIG[args.preproc]['metadata_path']
+    if args.weight_decay is not None:
+        CONFIG['optimizer']['Adam']['weight_decay'] = args.weight_decay
 
     logger.info('Path to data: %s\nPath to annotations: %s'%(args.input_path, args.metadata_path))
-
 
     if args.test_best_epoch is not None:
         assert args.test_best_epoch in (args.metrics or []), \

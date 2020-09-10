@@ -28,7 +28,7 @@ from pynet.history import History
 from pynet.visualization import Visualizer
 from pynet.observable import Observable
 import pynet.metrics as mmetrics
-
+import logging
 
 class Base(Observable):
     """ Class to perform classification.
@@ -67,6 +67,7 @@ class Base(Observable):
         super().__init__(
             signals=["before_epoch", "after_epoch", "after_iteration"])
         self.optimizer = kwargs.get("optimizer")
+        self.logger = logging.getLogger("pynet")
         self.loss = kwargs.get("loss")
         self.device = torch.device("cuda" if use_cuda else "cpu")
         for name in ("optimizer", "loss"):
@@ -98,31 +99,36 @@ class Base(Observable):
         if use_cuda and not torch.cuda.is_available():
             raise ValueError("No GPU found: unset 'use_cuda' parameter.")
         if pretrained is not None:
-            checkpoint = torch.load(pretrained, map_location=lambda storage, loc: storage)
-            if hasattr(checkpoint, "state_dict"):
-                self.model.load_state_dict(checkpoint.state_dict())
-            elif isinstance(checkpoint, dict):
-                if "model" in checkpoint:
-                    try:
-                        self.model.load_state_dict(checkpoint["model"], strict=False)
-                        print('Model loaded.', flush=True)
-                    except BaseException as e:
-                        print('Error while loading the model\'s weights: %s' % str(e), flush=True)
-                
-                if "optimizer" in checkpoint:
-                    if load_optimizer:
+            checkpoint = None
+            try:
+                checkpoint = torch.load(pretrained, map_location=lambda storage, loc: storage)
+            except BaseException as e:
+                self.logger.error('Impossible to load the checkpoint: %s' % str(e))
+            if checkpoint is not None:
+                if hasattr(checkpoint, "state_dict"):
+                    self.model.load_state_dict(checkpoint.state_dict())
+                elif isinstance(checkpoint, dict):
+                    if "model" in checkpoint:
                         try:
-                            self.optimizer.load_state_dict(checkpoint["optimizer"])
-                            for state in self.optimizer.state.values():
-                                for k, v in state.items():
-                                    if torch.is_tensor(v):
-                                        state[k] = v.to(self.device)
+                            self.model.load_state_dict(checkpoint["model"], strict=False)
+                            self.logger.info('Model loaded')
                         except BaseException as e:
-                            print('Error while loading the optimizer\'s weights: %s' % str(e))
-                    else:
-                        print("Warning: the optimizer's weights are not restored ! ", flush=True)
-            else:
-                self.model.load_state_dict(checkpoint)
+                            self.logger.error('Error while loading the model\'s weights: %s' % str(e))
+
+                    if "optimizer" in checkpoint:
+                        if load_optimizer:
+                            try:
+                                self.optimizer.load_state_dict(checkpoint["optimizer"])
+                                for state in self.optimizer.state.values():
+                                    for k, v in state.items():
+                                        if torch.is_tensor(v):
+                                            state[k] = v.to(self.device)
+                            except BaseException as e:
+                                self.logger.error('Error while loading the optimizer\'s weights: %s' % str(e))
+                        else:
+                            self.logger.warning("The optimizer's weights are not restored ! ")
+                else:
+                    self.model.load_state_dict(checkpoint)
         if freeze_until_layer is not None:
             freeze_until(self.model, freeze_until_layer)
 

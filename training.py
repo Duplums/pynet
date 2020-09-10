@@ -7,6 +7,7 @@ from pynet.models.vgg import *
 from pynet.losses import *
 from pynet.models.colenet import ColeNet
 from pynet.models.psynet import PsyNet
+from pynet.models.sfcn import SFCN
 from pynet.models.alpha_wgan import *
 from pynet.augmentation import *
 import pandas as pd
@@ -100,6 +101,9 @@ class BaseTrainer():
             net = vgg11(num_classes=num_classes, init_weights=True, dim="3d", **kwargs)
         elif name == "vgg16":
             net = vgg16(num_classes=num_classes, init_weights=True, dim="3d", **kwargs)
+        elif name == "sfcn":
+            net = SFCN(output_dim=num_classes, dropout=True, **kwargs)
+            logger.warning('By default, dropout=True for SFCN.')
         elif name == "densenet121":
             net = densenet121(progress=False, num_classes=num_classes, drop_rate=args.dropout, bayesian=args.bayesian,
                               concrete_dropout=args.concrete_dropout, **kwargs)
