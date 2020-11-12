@@ -129,9 +129,29 @@ class History(object):
             pickle.dump(self, open_file)
 
     @classmethod
-    def load(cls, file_name):
-        with open(file_name, "rb") as open_file:
-            return pickle.load(open_file)
+    def load(cls, file_name, folds=None):
+        # folds: (int) if given, load all the files corresponding to the given folds and merge them
+        if folds is None:
+            with open(file_name, "rb") as open_file:
+                return pickle.load(open_file)
+        else:
+            histories = []
+            for k in np.sort(folds):
+                with open(file_name%k, 'rb') as open_file:
+                    histories.append(pickle.load(open_file))
+            return cls.merge_histories(histories, folds=np.sort(folds))
+
+    @classmethod
+    def merge_histories(cls, histories, folds=None):
+        if len(histories) == 0: return None
+        merged = cls(histories[0].name, verbose=histories[0].verbose)
+        for k, h in enumerate(histories):
+            for step in h.steps:
+                if folds is not None:
+                    if type(step) == tuple and step[0] != folds[k]:
+                        continue
+                merged.log(step, **h.history[step])
+        return merged
 
     @classmethod
     def load_from_dir(cls, outdir, name, fold, epoch):
@@ -178,7 +198,6 @@ class History(object):
         if drop_last:
             for m in length_per_fold:
                 if len(length_per_fold[m]) > 0:
-                    print(length_per_fold[m][:-1], length_per_fold[m][0])
                     assert np.all(length_per_fold[m][:-1] == length_per_fold[m][0])
                     if not np.all(length_per_fold[m] == length_per_fold[m][0]):
                         del this_dict[m][-1]

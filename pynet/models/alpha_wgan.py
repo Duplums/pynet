@@ -38,14 +38,14 @@ class Alpha_WGAN(nn.Module):
 
         # Hyperparameters
         self.lambda_VAE = 1
-        self.lambda_prop = 1
+        self.lambda_prop = 0
         self.lambda_l1 = 10
         self.lambda_d = 1
 
         # Instantiates the Generator, Discriminator, Code Discrimnator (z_r vs z_hat), Encoder
 
         self.G = Generator(noise=latent_dim)
-        self.CD = Code_Discriminator(code_size=latent_dim, num_units=4096) # not used if use_kl == True
+        self.CD = Code_Discriminator(code_size=latent_dim, num_units=128) # not used if use_kl == True
         self.PD = nn.Linear(latent_dim, 1) # useful for predictors on the latent space
         self.D = Discriminator(is_dis=True)
         self.E = Discriminator(out_class=latent_dim, is_dis=False)
@@ -116,8 +116,10 @@ class Alpha_WGAN(nn.Module):
                 ssim_loss_intra = - self.SSIM(x_hat[inv_idx], x_hat)
                 if self.use_kl:
                     c_loss = 0.5 * torch.mean(torch.sum(x_enc ** 2, 1))  ## Simplified version of KL when logvar == 0
-                else:
+                elif self.use_kl == False:
                     c_loss = -self.CD(z_hat).mean()
+                elif self.use_kl == None:
+                    c_loss = 0.5 * torch.mean(torch.sum(x_enc ** 2, 1)) - self.CD(z_hat).mean()
                 prop_loss = self.criterion_l1(prop, labels)
                 loss1 = self.lambda_l1 * l1_loss + self.lambda_VAE*c_loss + self.lambda_d * d_loss + \
                         self.lambda_prop*prop_loss
@@ -170,8 +172,10 @@ class Alpha_WGAN(nn.Module):
                     x_rand = self.G(z_rand)
                     if self.use_kl:
                         c_loss = 0.5 * torch.mean(torch.sum(x_enc ** 2, 1)) ## Simplified version of KL when logvar == 0
-                    else:
+                    elif self.use_kl == False:
                         c_loss = -self.CD(z_hat).mean()
+                    elif self.use_kl == None:
+                        c_loss = 0.5 * torch.mean(torch.sum(x_enc ** 2, 1)) - self.CD(z_hat).mean()
 
                     prop_loss = self.criterion_l1(self.PD(x_enc), targets)
 
@@ -209,7 +213,7 @@ class Alpha_WGAN(nn.Module):
                     self.d_optimizer.zero_grad()
 
                     try:
-                        real_images = gen_load.__next__()[0].inputs.to(self.device)
+                        real_images = gen_load.__next__().inputs.to(self.device)
                         if pbar is not None:
                             pbar.update()
                     except StopIteration:
@@ -236,33 +240,33 @@ class Alpha_WGAN(nn.Module):
                 ###############################################
                 # Train CD
                 ###############################################
-                if not self.use_kl:
-                    self.set_requires_grad(D=False, CD=True, E=False, G=False, PD=False)
+                if not stop_it:
+                    if self.use_kl==False or self.use_kl==None:
+                        self.set_requires_grad(D=False, CD=True, E=False, G=False, PD=False)
 
-                    for iters in range(self.cd_iter):
-                        self.cd_optimizer.zero_grad()
-                        z_rand = torch.randn((_batch_size, self.latent_dim), device=self.device)
-                        c_loss = -self.CD(z_hat).mean()
-                        gradient_penalty_cd = Alpha_WGAN.calc_gradient_penalty(self.CD, z_hat.data, z_rand.data)
+                        for iters in range(self.cd_iter):
+                            self.cd_optimizer.zero_grad()
+                            z_rand = torch.randn((_batch_size, self.latent_dim), device=self.device)
+                            c_loss = -self.CD(z_hat).mean()
+                            gradient_penalty_cd = Alpha_WGAN.calc_gradient_penalty(self.CD, z_hat.data, z_rand.data)
 
-                        loss3 = -self.CD(z_rand).mean() - self.lambda_VAE * c_loss + gradient_penalty_cd
+                            loss3 = -self.CD(z_rand).mean() - self.lambda_VAE * c_loss + gradient_penalty_cd
+                            loss3.backward(retain_graph=True)
+                            self.cd_optimizer.step()
+                    else:
+                        loss3 = 0.5 * torch.mean(torch.sum(x_enc ** 2, 1))
 
-                        loss3.backward(retain_graph=True)
-                        self.cd_optimizer.step()
-                else:
-                    loss3 = 0.5 * torch.mean(torch.sum(x_enc ** 2, 1))
+                    current_values['loss_VAE'] = loss3.detach().cpu().numpy()
 
-                current_values['loss_VAE'] = loss3.detach().cpu().numpy()
+                    if len(values) % 10 == 0 and visualizer is not None:
+                        visualizer.refresh_current_metrics()
+                        visuals = self.get_current_visuals()
+                        visualizer.display_images(visuals, ncols=3, middle_slices=True)
 
-                if len(values) % 10 == 0 and visualizer is not None:
-                    visualizer.refresh_current_metrics()
-                    visuals = self.get_current_visuals()
-                    visualizer.display_images(visuals, ncols=3, middle_slices=True)
+                    values.append(current_values)
 
-                values.append(current_values)
-
-                if self.g_iter > 0 and self.d_iter > 0:
-                    print('\nloss_enc_dec: {}, loss_disc: {}'.format(float(loss1), float(loss2)), flush=True)
+                    if self.g_iter > 0 and self.d_iter > 0:
+                        print('\nloss_enc_dec: {}, loss_disc: {}'.format(float(loss1), float(loss2)), flush=True)
         
         for scheduler in self.schedulers.values():
             scheduler.step()
@@ -352,8 +356,7 @@ class Alpha_WGAN(nn.Module):
         """WGAN-GP gradient penalty"""
         assert x.size() == x_gen.size(), "real and sampled sizes do not match"
         alpha_size = tuple((len(x), *(1,) * (x.dim() - 1)))
-        alpha_t = torch.cuda.FloatTensor if x.is_cuda else torch.Tensor
-        alpha = alpha_t(*alpha_size).uniform_()
+        alpha = torch.rand(*alpha_size, device='cuda' if x.is_cuda else 'cpu')
         x_hat = x.data * alpha + x_gen.data * (1 - alpha)
         x_hat.requires_grad = True
 
@@ -422,11 +425,9 @@ class Code_Discriminator(nn.Module):
     def __init__(self, code_size=100, num_units=750):
         super(Code_Discriminator, self).__init__()
         self.l1 = nn.Sequential(nn.Linear(code_size, num_units),
-                                nn.BatchNorm1d(num_units),
-                                nn.LeakyReLU(0.2, inplace=True))
+                                nn.LeakyReLU(0.2))
         self.l2 = nn.Sequential(nn.Linear(num_units, num_units),
-                                nn.BatchNorm1d(num_units),
-                                nn.LeakyReLU(0.2, inplace=True))
+                                nn.LeakyReLU(0.2))
         self.l3 = nn.Linear(num_units, 1)
 
     def forward(self, x):

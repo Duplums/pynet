@@ -14,7 +14,9 @@ Module that provides core functions to load and split a dataset.
 # Imports
 from collections import namedtuple, OrderedDict
 import torch
-from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler, RandomSampler
+import logging
+import bisect
+from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler, RandomSampler, ConcatDataset
 import numpy as np
 from tqdm import tqdm
 import pandas as pd
@@ -48,7 +50,7 @@ class DataManager(object):
                  N_train_max=None,  projection_labels=None, number_of_folds=10, batch_size=1, sampler=None,
                  in_features_transforms=None, input_transforms=None, output_transforms=None, labels_transforms=None,
                  stratify_label_transforms=None, data_augmentation=None, self_supervision=None, add_input=False,
-                 patch_size=None, input_size=None, test_size=0.1, dataset=None, device='cpu',
+                 patch_size=None, input_size=None, test_size=0.1, dataset=None, device='cpu', sep=',',
                  **dataloader_kwargs):
         """ Splits an input numpy array using memory-mapping into three sets:
         test, train and validation. This function can stratify the data.
@@ -58,12 +60,12 @@ class DataManager(object):
 
         Parameters
         ----------
-        input_path: str
+        input_path: str or list[str]
             the path to the numpy array containing the input tensor data
             that will be splited/loaded.
-        metadata_path: str
+        metadata_path: str or list[str]
             the path to the metadata table in tsv format.
-        output_path: str, default None
+        output_path: str or list[str], default None
             the path to the numpy array containing the output tensor data
             that will be splited/loaded.
         add_to_input: list of str, default None
@@ -106,7 +108,33 @@ class DataManager(object):
         dataset: Dataset object, default None
             The Dataset used to create the DataLoader. It must be a subclass of <ArrayDataset>
         """
-        df = pd.read_csv(metadata_path, sep="\t")
+        assert input_path is None or type(input_path) == type(metadata_path)
+        if output_path is not None:
+            assert input_path is None or type(output_path) == type(input_path)
+
+        input_path = [input_path] if type(input_path) == str else input_path
+        metadata_path = [metadata_path] if type(metadata_path) == str else metadata_path
+        output_path = [output_path] if output_path is not None else None
+
+        assert input_path is None or len(input_path) == len(metadata_path)
+        self.logger = logging.getLogger("pynet")
+
+        if input_path is not None:
+            for (i, m) in zip(input_path, metadata_path):
+                self.logger.info('Correspondance {data} <==> {meta}'.format(data=i, meta=m))
+
+            self.inputs = [np.load(p, mmap_mode='r') for p in input_path]
+        else:
+            self.inputs = None
+
+        if output_path is not None:
+            self.outputs = [np.load(p, mmap_mode='r') for p in output_path]
+
+        all_df = [pd.read_csv(p, sep=sep) for p in metadata_path]
+        assert self.inputs is None or np.all([len(i) == len(m) for (i,m) in zip(self.inputs, all_df)])
+
+        df = pd.concat(all_df, ignore_index=True, sort=False)
+
         mask = DataManager.get_mask(
             df=df,
             projection_labels=projection_labels,
@@ -117,14 +145,12 @@ class DataManager(object):
         # We should only work with masked data but we want to preserve the memory mapping so we are getting the right
         # index at the end (in __getitem__ of ArrayDataset)
 
-        self.inputs = np.load(input_path, mmap_mode='r')
         self.outputs, self.labels, self.stratify_label, self.features_to_add = (None, None, None, None)
-        if output_path is not None:
-            self.outputs = np.load(output_path, mmap_mode='r')
 
         if labels is not None:
             if self_supervision is not None:
                 raise ValueError("Impossible to set a label if self_supervision is on.")
+            assert np.all(~df[labels][mask].isna())
             self.labels = df[labels].values.copy()
             self.labels = self.labels.squeeze()
 
@@ -216,8 +242,11 @@ class DataManager(object):
                 train_indices = mask_indices[train_indices]
                 test_indices = mask_indices[test_indices]
 
-        if self.labels is not None:
-            assert len(self.labels) == len(self.inputs)
+        if train_indices is None:
+            return
+
+        assert len(set(train_indices) & set(test_indices)) == 0, 'Test set must be independent from train set'
+
         self.dataset["test"] = dataset_cls(
             self.inputs, test_indices, labels=self.labels,
             features_to_add=self.features_to_add,
@@ -228,10 +257,8 @@ class DataManager(object):
             label_transforms = self.labels_transforms,
             self_supervision=self.self_supervision,
             patch_size=patch_size, input_size=input_size,
+            concat_datasets=(self.inputs is not None),
             device=device)
-
-        if train_indices is None:
-            return
 
         # 2nd step: split the training set into K folds (K-1 for training, 1
         # for validation, K times)
@@ -270,7 +297,8 @@ class DataManager(object):
 
 
         for fold_train_index, fold_val_index in gen:
-            assert len(set(fold_val_index) & set(fold_train_index)) == 0
+            assert len(set(fold_val_index) & set(fold_train_index)) == 0, \
+                'Validation set must be independant from test set'
 
             train_dataset = dataset_cls(
                 self.inputs, fold_train_index,
@@ -283,6 +311,7 @@ class DataManager(object):
                 label_transforms=self.labels_transforms,
                 self_supervision=self.self_supervision,
                 patch_size=patch_size, input_size=input_size,
+                concat_datasets=(self.inputs is not None),
                 device=device)
             val_dataset = dataset_cls(
                 self.inputs, fold_val_index,
@@ -295,6 +324,7 @@ class DataManager(object):
                 label_transforms=self.labels_transforms,
                 self_supervision=self.self_supervision,
                 patch_size=patch_size, input_size=input_size,
+                concat_datasets=(self.inputs is not None),
                 device=device
             )
             self.dataset["train"].append(train_dataset)
@@ -488,18 +518,19 @@ class ArrayDataset(Dataset):
                  add_input=False, in_features_transforms=None,
                  input_transforms=None, output_transforms=None,
                  label_transforms=None, self_supervision=None,
-                 patch_size=None, input_size=None, device='cpu'):
+                 patch_size=None, input_size=None, concat_datasets=False, device='cpu'):
         """ Initialize the class.
 
         Parameters
         ----------
-        inputs: numpy array
+        inputs: numpy array or list of numpy array
             the input data.
         indices: iterable of int
             the list of indices that is considered in this dataset.
+        labels: DataFrame or numpy array
         features_to_add: list of pd.Series
             list of features to add to each input
-        outputs: numpy array
+        outputs: numpy array or list of numpy array
             the output data.
         add_input: bool, default False
             if set concatenate the input data to the output (useful with
@@ -508,16 +539,16 @@ class ArrayDataset(Dataset):
             if set, the transformation to apply to each input that will generate a label
         patch_size: tuple, default None
             if set, return only patches of the input image
+        concat_datasets: bool, default False
+            whether to consider a list of inputs/outputs as a list of multiple datasets or a unique dataset
         """
-        if labels is not None:
-            assert len(inputs) == len(labels)
-        if outputs is not None:
-            assert len(inputs) == len(outputs)
+
         self.inputs = inputs
         self.labels = labels
         self.outputs = outputs
         self.device = device
         self.indices = indices
+        self.concat_datasets = concat_datasets
         self.add_input = add_input
         self.patch_size = patch_size
         self.input_size = input_size
@@ -535,6 +566,14 @@ class ArrayDataset(Dataset):
         if self.add_input and self.outputs is None:
             self.outputs = self.inputs
             self.add_input = False
+        if self.concat_datasets:
+            self.cumulative_sizes = np.cumsum([len(inp) for inp in self.inputs])
+
+        if self.labels is not None and self.inputs is not None:
+            assert (self.concat_datasets and self.cumulative_sizes[-1] == len(self.labels)) or \
+                   len(self.inputs) == len(self.labels)
+        if self.outputs is not None and self.inputs is not None:
+            assert len(self.inputs) == len(self.outputs)
 
     def __getitem__(self, item):
         """ Return the requested item.
@@ -561,15 +600,25 @@ class ArrayDataset(Dataset):
                     _outputs = self.output_cached[indx]
                 return DataItem(inputs=_inputs, outputs=_outputs, labels=_labels)
 
-        _inputs = self.inputs[self.indices[item]]
-        _labels, _outputs = (None, None)
+        idx = self.indices[item]
+        _outputs = None
+        if self.concat_datasets:
+            dataset_idx = bisect.bisect_right(self.cumulative_sizes, idx)
+            sample_idx = idx - self.cumulative_sizes[dataset_idx-1] if dataset_idx > 0 else idx
+            _inputs = self.inputs[dataset_idx][sample_idx]
+            if self.outputs is not None:
+                _outputs = self.outputs[dataset_idx][sample_idx]
+        else:
+            _inputs = self.inputs[idx]
+            if self.outputs is not None:
+                _outputs = self.outputs[idx]
+
+        if self.outputs is not None and self.add_input:
+            _outputs = np.concatenate((_outputs, _inputs), axis=concat_axis)
+
+        _labels = None
         if self.labels is not None: # Particular case in which we can deal with strings before transformations...
-            _labels = self.labels[self.indices[item]]
-        if self.outputs is not None:
-            if self.add_input:
-                _outputs = np.concatenate((self.outputs[self.indices[item]], _inputs), axis=concat_axis)
-            else:
-                _outputs = self.outputs[self.indices[item]]
+            _labels = self.labels[idx]
 
         # Apply the transformations to the data
         for tf in self.input_transforms:

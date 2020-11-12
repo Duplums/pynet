@@ -2,6 +2,7 @@ from pynet.core import Base
 from pynet.datasets.core import ArrayDataset, DataItem
 from pynet.augmentation import *
 from pynet.transforms import Crop
+import bisect
 from tqdm import tqdm
 import torch
 import numpy as np
@@ -22,6 +23,7 @@ class SimCLRDataset(ArrayDataset):
             compose_transforms.register(add_motion, probability=0.5)
             compose_transforms.register(add_noise, sigma=(0.1, 1), probability=0.5)
             compose_transforms.register(add_spike, n_spikes=2, probability=0.5)
+            compose_transforms.register(cutout, probability=0.5, patch_size=40, inplace=True)
             compose_transforms.register(Crop((64, 64, 64), "random", resize=True), probability=0.5)
             #compose_transforms.register(add_biasfield, probability=0.1, coefficients=0.5)
 
@@ -42,11 +44,17 @@ class SimCLRDataset(ArrayDataset):
         if self.features_to_add is not None:
             raise ValueError('Unexpected arg: features_to_add')
 
-        _inputs = self.inputs[self.indices[item]]
-        _labels, _outputs = (None, None)
+        idx = self.indices[item]
+        _outputs, _labels = None, None
+        if self.concat_datasets:
+            dataset_idx = bisect.bisect_right(self.cumulative_sizes, idx)
+            sample_idx = idx - self.cumulative_sizes[dataset_idx-1] if dataset_idx > 0 else idx
+            _inputs = self.inputs[dataset_idx][sample_idx]
+        else:
+            _inputs = self.inputs[idx]
 
         if self.labels is not None:
-            _labels = self.labels[self.indices[item]]
+            _labels = self.labels[idx]
             for tf in self.labels_transforms:
                 _labels = tf(_labels)
 
@@ -56,8 +64,10 @@ class SimCLRDataset(ArrayDataset):
 
         # Now apply the self supervision twice to have 2 versions of the input
         if self.self_supervision is not None:
+            np.random.seed()
             _inputs_i = self.self_supervision(_inputs)
             _inputs_j = self.self_supervision(_inputs)
+
         _inputs = np.stack((_inputs_i, _inputs_j), axis=0)
 
         return DataItem(inputs=_inputs, outputs=_outputs, labels=_labels)
@@ -112,11 +122,11 @@ class SimCLR(Base):
             losses.append(float(batch_loss))
             y_true.extend(target.detach().cpu().numpy())
             y_pred.extend(logits.detach().cpu().numpy())
-
             if iteration % 10 == 0:
                 if visualizer is not None:
                     visualizer.refresh_current_metrics()
-                    visualizer.display_images(inputs[:2,0,:], ncols=2, middle_slices=True)
+                    visualizer.display_images(torch.cat((inputs[:2,0,:],inputs[:2,1,:])),
+                                              ncols=2, middle_slices=True)
             iteration += 1
             for name, metric in self.metrics.items():
                 if name not in values:

@@ -170,7 +170,7 @@ class ResNet(nn.Module):
                                        dilate=replace_stride_with_dilation[2],
                                        concrete_dropout=concrete_dropout)
         self.avgpool = nn.AdaptiveAvgPool3d(1)
-        if dropout_rate is not None:
+        if dropout_rate is not None and dropout_rate>0:
             self.dropout = nn.Dropout(dropout_rate)
 
         # attention mechanism

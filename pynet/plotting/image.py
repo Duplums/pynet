@@ -173,6 +173,8 @@ def plot_losses(train_history, val_history=None, patterns_to_del=None,
             fig, axes = plt.subplots(n_rows, n_cols, squeeze=False, **kwargs)
         for (i, dict_train) in enumerate(list_dict_training):
             (row, col) = (i%n_rows, i//n_rows)
+            if metric not in dict_train:
+                continue
             Y_train = dict_train[metric]
             Y_val = list_dict_val[i][metric] if (list_dict_val is not None and metric in list_dict_val[i]) else None
             X = list(range(len(Y_train[0])))
@@ -217,7 +219,8 @@ def plot_losses(train_history, val_history=None, patterns_to_del=None,
             plt.savefig(saving_path+'_'+metric, format=output_format)
     if saving_path and same_plot:
         plt.savefig(saving_path, format=output_format)
-    plt.show()
+
+    return fig, axes
 
 # We assume a binary classification where Y_true has shape (n_samples,) and Y_pred has shape (n_samples, 2)
 # or (n_samples,)

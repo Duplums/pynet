@@ -184,13 +184,24 @@ class Normalize(object):
 
 class Crop(object):
     """Crop the given n-dimensional array either at a random location or centered"""
-    def __init__(self, shape, type="center", resize=False):
+    def __init__(self, shape, type="center", resize=False, keep_dim=False):
+        """:param
+        shape: tuple or list of int
+            The shape of the patch to crop
+        type: 'center' or 'random'
+            Wheter the crop will be centered or at a random location
+        resize: bool, default False
+            If True, resize the cropped patch to the inital dim. If False, depends on keep_dim
+        keep_dim: bool, default False
+            if True and resize==False, put a constant value around the patch cropped. If resize==True, does nothing
+        """
         assert type in ["center", "random"]
         self.shape = shape
         self.copping_type = type
         self.resize=resize
+        self.keep_dim=keep_dim
 
-    def __call__(self, arr, seed=None):
+    def __call__(self, arr):
         assert isinstance(arr, np.ndarray)
         assert type(self.shape) == int or len(self.shape) == len(arr.shape)
 
@@ -211,6 +222,14 @@ class Crop(object):
         if self.resize:
             # resize the image to the input shape
             return sk_tf.resize(arr[tuple(indexes)], img_shape, preserve_range=True)
+
+        if self.keep_dim:
+            mask = np.zeros(img_shape, dtype=np.bool)
+            mask[tuple(indexes)] = True
+            arr_copy = arr.copy()
+            arr_copy[~mask] = 0
+            return arr_copy
+
         return arr[tuple(indexes)]
 
 class Resize(object):

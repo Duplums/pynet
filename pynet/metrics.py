@@ -17,9 +17,10 @@ import torch
 import numpy as np
 import torch.nn.functional as func
 import sklearn.metrics as sk_metrics
-from pynet.utils import Metrics
+from pynet.utils import Metrics, get_pickle_obj
 import torch.nn as nn
-from sklearn.metrics import roc_auc_score, balanced_accuracy_score, confusion_matrix
+from sklearn.metrics import roc_auc_score, balanced_accuracy_score, confusion_matrix, average_precision_score
+from scipy.special import expit
 
 # Global parameters
 logger = logging.getLogger("pynet")
@@ -34,6 +35,24 @@ def get_confusion_matrix(y_pred, y):
 def accuracy(y_pred, y):
     y_pred = y_pred.data.max(dim=1)[1]
     return sk_metrics.accuracy_score(y.detach().cpu().numpy(), y_pred.detach().cpu().numpy())
+
+def ECE_score(y_pred, y_true, normalize=False, n_bins=5):
+    from sklearn.calibration import calibration_curve
+    if isinstance(y_true, torch.Tensor):
+        y_true = y_true.detach().cpu().numpy()
+    if isinstance(y_pred, torch.Tensor):
+        y_pred = y_pred.detach().cpu().numpy()
+
+    frac_pos, mean_pred_proba = calibration_curve(y_true, y_pred, normalize, n_bins)
+    confidence_hist, _ = np.histogram(y_pred, bins=n_bins, range=(0,1))
+
+    if len(confidence_hist) > len(frac_pos):
+        print('Not enough data to compute confidence in all bins. NaN returned')
+        return np.nan
+
+    score = np.sum(confidence_hist * np.abs(frac_pos - mean_pred_proba) / len(y_pred))
+
+    return score
 
 def roc_auc(y_pred, y):
     if isinstance(y, torch.Tensor):
@@ -125,7 +144,7 @@ METRICS = {
     "specificity": specificity,
     "sensitivity": sensitivity,
     "confusion_matrix": get_confusion_matrix,
-    "roc_auc": roc_auc
+    "roc_auc": roc_auc,
     # cf. scikit doc: " The binary case expects a shape (n_samples,), and the scores
     # must be the scores of the class with the greater label."
 }
@@ -182,6 +201,72 @@ class BinaryClassificationMetrics(object):
             "recall": rec
         }
         return metrics[self.score]
+
+def get_binary_classification_metrics(path, epochs_tested, folds_tested, MCTest=False, Ensembling=False, display=True):
+
+    assert len(epochs_tested) == len(folds_tested), "Invalid nb of epochs or folds"
+
+    test_results = [get_pickle_obj(path.format(fold=f, epoch=e)) for (f, e) in zip(folds_tested, epochs_tested)]
+    entropy_func = lambda sigma: - ((1 - sigma) * np.log(1 - sigma + 1e-8) + sigma * np.log(sigma + 1e-8))
+
+    ## MC Tests
+    if MCTest or Ensembling:
+        MI = np.concatenate(
+            [entropy_func(expit(np.array(t['y'])).mean(axis=1)) - entropy_func(expit(np.array(t['y']))).mean(axis=1)
+             for i, t in enumerate(test_results)])
+        test_results = [{'y_pred': expit(np.array(t['y'])).mean(axis=1), 'y_true': np.array(t['y_true'])[:, 0]} for t in
+                        test_results]
+        assert all(np.array_equal(np.array(t['y_true']), np.array(test_results[0]['y_true'])) for t in test_results)
+        print('MI = {} +/- {}'.format(np.mean(MI), np.std(MI)))
+
+    else:
+        test_results = [{'y_pred': expit(np.array(t['y_pred'])), 'y_true': np.array(t['y_true'])} for t in test_results]
+
+    y_pred, y_true = np.array([t['y_pred'] for t in test_results]), np.array([t['y_true'] for t in test_results])
+    all_ece = [ECE_score(t['y_pred'], t['y_true']) for t in test_results]
+    H_pred = entropy_func(y_pred)
+    mask_corr = [(pred > 0.5) == true for (pred, true) in zip(y_pred, y_true)]
+    H_pred_corr = np.concatenate([H_pred[f][mask_corr[f]] for f in range(len(folds_tested))])
+    H_pred_incorr = np.concatenate([H_pred[f][~mask_corr[f]] for f in range(len(folds_tested))])
+    all_auc = [roc_auc_score(t['y_true'], np.array(t['y_pred'])) for t in test_results]
+    all_aupr_success = [average_precision_score(t['y_true'], t['y_pred']) for t in test_results]
+    all_aupr_error = [average_precision_score(1-np.array(t['y_true']), -np.array(t['y_pred'])) for t in test_results]
+
+    all_confusion_matrix = [confusion_matrix(t['y_true'], np.array(t['y_pred']) > 0.5) for t in test_results]
+    recall = [[m[i, i] / m[i, :].sum() for m in all_confusion_matrix] for i in range(2)]
+    precision = [m[1, 1] / m[:, 1].sum() for m in all_confusion_matrix]
+    bacc = [balanced_accuracy_score(t['y_true'], np.array(t['y_pred']) > 0.5) for t in test_results]
+    if display:
+        print('Mean AUC= {} +/- {} \nMean Balanced Acc = {} +/- {}\nMean Recall_+ = {} +/- {}\nMean Recall_- = {} +/- {}\n'
+              'Mean Precision = {} +/- {}\n Mean H_corr = {} +/- {} \nMean H_incorr = {} +/- {}\nMean AUPR_Success = {} +/- {}\n'
+              'Mean AUPR_Error = {} +/- {}\nMean ECE = {} +/- {}'.
+              format(np.mean(all_auc), np.std(all_auc), np.mean(bacc), np.std(bacc), np.mean(recall[1]), np.std(recall[1]),
+                     np.mean(recall[0]), np.std(recall[0]), np.mean(precision), np.std(precision),
+                     H_pred_corr.mean(), H_pred_corr.std(), H_pred_incorr.mean(), H_pred_incorr.std(),
+                     np.mean(all_aupr_success), np.std(all_aupr_success), np.mean(all_aupr_error), np.std(all_aupr_error),
+                     np.mean(all_ece), np.std(all_ece)))
+    return dict(auc=all_auc, bacc=bacc, recall_pos=recall[1], recall_neg=recall[0], precision=precision,
+                aupr_success=all_aupr_success, aupr_error=all_aupr_error, ece=all_ece)
+
+
+def get_regression_metrics(path, epochs_tested, folds_tested, display=True):
+    from sklearn.linear_model import LinearRegression
+    from scipy.stats import pearsonr
+
+    data =  [get_pickle_obj(path.format(fold=f, epoch=e)) for (f, e) in zip(folds_tested, epochs_tested)]
+    data = [(np.array(d['y_true']).reshape(-1, 1), np.array(d['y_pred']).reshape(-1, 1)) for d in data]
+
+    regs = [LinearRegression().fit(y_true, y_pred) for (y_true, y_pred) in data]
+    correlations = [pearsonr(y_pred.flatten(), y_true.flatten())[0] for (y_true, y_pred) in data]
+    MAEs = [np.mean(np.abs(y_pred - y_true)) for (y_true, y_pred) in data]
+    RMSEs = [np.sqrt(np.mean(np.abs(y_pred - y_true) ** 2)) for (y_true, y_pred) in data]
+    R2s = [reg.score(y_true, y_pred) for (reg, (y_true, y_pred)) in zip(regs, data)]
+    if display:
+        print('MAE = {} +/- {}\nRMSE = {} +/- {}\nR^2 = {} +/- {}\nr = {} +/- {}'.format(np.mean(MAEs), np.std(MAEs),
+                                                                                         np.mean(RMSEs), np.std(RMSEs),
+                                                                                         np.mean(R2s), np.std(R2s),
+                                                                                         np.mean(correlations), np.std(correlations)))
+    return dict(mae=MAEs, rmse=RMSEs, R2=R2s, r=correlations)
 
 
 class SKMetrics(object):

@@ -22,8 +22,7 @@ from .transform import affine_flow
 from .utils import interval
 
 
-def affine(arr, rotation=10, translation=10, zoom=0.2, order=3, dist="uniform",
-           seed=None):
+def affine(arr, rotation=10, translation=10, zoom=0.2, order=3, dist="uniform"):
     """ Random affine transformation.
 
     The affine translation & rotation parameters are drawn from a lognormal
@@ -46,9 +45,6 @@ def affine(arr, rotation=10, translation=10, zoom=0.2, order=3, dist="uniform",
         the order of the spline interpolation in the range [0, 5].
     dist: str, default 'uniform'
         the sampling distribution: 'uniform' or 'lognormal'.
-    seed: int, default None
-        seed to control random number generator.
-
     Returns
     -------
     transformed: array
@@ -57,12 +53,11 @@ def affine(arr, rotation=10, translation=10, zoom=0.2, order=3, dist="uniform",
     rotation = interval(rotation)
     translation = interval(translation)
     random_rotations = random_generator(
-        rotation, arr.ndim, dist=dist, seed=seed)
+        rotation, arr.ndim, dist=dist)
     random_translations = random_generator(
-        translation, arr.ndim, dist=dist, seed=seed)
+        translation, arr.ndim, dist=dist)
     random_zooms = random_generator(
-        translation, arr.ndim, dist=dist, seed=seed)
-    np.random.seed(seed)
+        translation, arr.ndim, dist=dist)
     random_zooms = np.random.uniform(
         low=(1 - zoom), high=(1 + zoom), size=arr.ndim)
     random_rotations = Rotation.from_euler(
@@ -75,8 +70,33 @@ def affine(arr, rotation=10, translation=10, zoom=0.2, order=3, dist="uniform",
     transformed = map_coordinates(arr, locs, order=order, cval=0)
     return transformed.reshape(shape)
 
+def cutout(arr, patch_size=None, value=0, inplace=False):
+    """Apply a cutout on the images
+    cf. Improved Regularization of Convolutional Neural Networks with Cutout, arXiv, 2017
+    We assume that the square to be cut is inside the image.
+    """
+    img_shape = np.array(arr.shape)
+    if type(patch_size) == int:
+        size = [patch_size for _ in range(len(img_shape))]
+    else:
+        size = np.copy(patch_size)
+    assert len(size) == len(img_shape), "Incorrect patch dimension."
+    indexes = []
+    for ndim in range(len(img_shape)):
+        if size[ndim] > img_shape[ndim] or size[ndim] < 0:
+            size[ndim] = img_shape[ndim]
+        delta_before = np.random.randint(0, img_shape[ndim] - size[ndim] + 1)
+        indexes.append(slice(delta_before, delta_before + size[ndim]))
+    if inplace:
+        arr[tuple(indexes)] = value
+        return arr
+    else:
+        arr_cut = np.copy(arr)
+        arr_cut[tuple(indexes)] = value
+        return arr_cut
 
-def flip(arr, axis=None, seed=None):
+
+def flip(arr, axis=None):
     """ Apply a random mirror flip.
 
     Parameters
@@ -86,8 +106,6 @@ def flip(arr, axis=None, seed=None):
     axis: int, default None
         apply flip on the specified axis. If not specified, randomize the
         flip axis.
-    seed: int, default None
-        seed to control random number generator.
 
     Returns
     -------
@@ -95,12 +113,11 @@ def flip(arr, axis=None, seed=None):
         the transformed input data.
     """
     if axis is None:
-        np.random.seed(seed)
         axis = np.random.randint(low=0, high=arr.ndim, size=1)[0]
     return np.flip(arr, axis=axis)
 
 
-def deformation(arr, max_displacement=4, alpha=3, order=3, seed=None):
+def deformation(arr, max_displacement=4, alpha=3, order=3):
     """ Apply dense random elastic deformation.
 
     Reference: Khanal B, Ayache N, Pennec X., Simulating Longitudinal
@@ -119,29 +136,24 @@ def deformation(arr, max_displacement=4, alpha=3, order=3, seed=None):
         genrate smoother fields.
     order: int, default 3
         the order of the spline interpolation in the range [0, 5].
-    seed: int, default None
-        seed to control random number generator.
 
     Returns
     -------
     transformed: array
         the transformed input data.
     """
-    kwargs = {"seed": seed}
     flow_x = gaussian_random_field(
-        arr.shape[:2], alpha=alpha, normalize=True, **kwargs)
+        arr.shape[:2], alpha=alpha, normalize=True)
     flow_x /= flow_x.max()
     flow_x = np.asarray([flow_x] * arr.shape[-1]).transpose(1, 2, 0)
-    if seed is not None:
-        kwargs = {"seed": seed + 2}
+
     flow_y = gaussian_random_field(
-        arr.shape[:2], alpha=alpha, normalize=True, **kwargs)
+        arr.shape[:2], alpha=alpha, normalize=True)
     flow_y /= flow_y.max()
     flow_y = np.asarray([flow_y] * arr.shape[-1]).transpose(1, 2, 0)
-    if seed is not None:
-        kwargs = {"seed": seed + 4}
+
     flow_z = gaussian_random_field(
-        arr.shape[:2], alpha=alpha, normalize=True, **kwargs)
+        arr.shape[:2], alpha=alpha, normalize=True)
     flow_z /= flow_z.max()
     flow_z = np.asarray([flow_z] * arr.shape[-1]).transpose(1, 2, 0)
     flow = np.asarray([flow_x, flow_y, flow_z])
@@ -154,7 +166,7 @@ def deformation(arr, max_displacement=4, alpha=3, order=3, seed=None):
     return transformed.reshape(arr.shape)
 
 
-def random_generator(interval, size, dist="uniform", seed=None):
+def random_generator(interval, size, dist="uniform"):
     """ Random varaible generator.
 
     Parameters
@@ -166,16 +178,14 @@ def random_generator(interval, size, dist="uniform", seed=None):
         distribution.
     dist: str, default 'uniform'
         the sampling distribution: 'uniform' or 'lognormal'.
-    seed: int, default None
-        seed to control random number generator.
 
     Returns
     -------
     random_variables: array
         the generated random variable.
     """
+    np.random.seed()
     if dist == "uniform":
-        np.random.seed(seed)
         random_variables = np.random.uniform(
             low=interval[0], high=interval[1], size=size)
     # max height occurs at x = exp(mean - sigma**2)
@@ -183,10 +193,9 @@ def random_generator(interval, size, dist="uniform", seed=None):
     # exp((mean - sigma**2) + sqrt(2*sigma**2*ln(2))) - exp((mean - sigma**2)
     # - sqrt(2*sigma**2*ln(2)))
     elif dist == "lognormal":
-        np.random.seed(seed)
         sign = np.random.randint(0, 2, size=size) * 2 - 1
         sign = sign.astype(np.float)
-        np.random.seed(seed)
+
         random_variables = np.random.lognormal(mean=0., sigma=1., size=size)
         random_variables /= 12.5
         random_variables *= (sign * interval[1])

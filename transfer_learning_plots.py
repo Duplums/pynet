@@ -6,6 +6,7 @@ from pynet.utils import get_pickle_obj
 from pynet.plotting.image import plot_data_reduced
 from pynet.datasets.core import DataManager
 from json_config import CONFIG
+from pynet.history import History
 import matplotlib.pyplot as plt
 import seaborn
 import pandas as pd
@@ -13,6 +14,19 @@ import pickle
 seaborn.set_style("darkgrid")
 
 ## Analysis of the generalization power of DenseNet pretrained on different pb (supervised and unsupervised) for dx classification
+
+
+def train_linear_model(data_train, data_test, **kwargs):
+    # Train the model with a logistic regression
+    X, y = np.array(data_train['y']).reshape(len(data_train['y']), -1), np.array(data_train['y_true']).ravel()
+    model = LogisticRegression(solver='liblinear', **kwargs).fit(X, y)
+    # Test the model
+    X_test, y_test = np.array(data_test['y']).reshape(len(data_test['y']), -1), \
+                     np.array(data_test['y_true']).ravel()
+    y_pred = model.predict_proba(X_test)[:, 1]
+    return y_test, y_pred
+
+
 
 blocks = ["block1", "block2", "block3", "block4"]
 root = "/neurospin/psy_sbox/bd261576/checkpoints"
@@ -44,9 +58,9 @@ paths = [
     "scz_prediction/Benchmark_Transfer/Age_Pretraining/schizconnect_vip/DenseNet/block_outputs",
     "regression_age_sex/Benchmark_IXI_HCP/DenseNet/Sex_Age/block_outputs",
     "scz_prediction/Benchmark_Transfer/Sex_Age_Pretraining/schizconnect_vip/DenseNet/block_outputs",
-    "self_supervision/simCLR/DenseNet/exp_3/noisy_spike_motion_crop_DA/age_supervision/block_outputs",
+    "self_supervision/simCLR/DenseNet/N_1600/exp_3/age_supervision/noisy_spike_motion_crop_DA/block_outputs",
     "scz_prediction/Benchmark_Transfer/Self_Supervision/schizconnect_vip/SimCLR_Exp3/noisy_spike_motion_crop_DA/age_supervision/block_outputs",
-    "self_supervision/simCLR/DenseNet/exp_3/noisy_spike_motion_crop_DA/unsupervised/block_outputs",
+    "self_supervision/simCLR/DenseNet/N_1600/exp_3/unsupervised/noisy_spike_motion_crop_DA/block_outputs",
     "scz_prediction/Benchmark_Transfer/Self_Supervision/schizconnect_vip/SimCLR_Exp3/noisy_spike_motion_crop_DA/unsupervised/block_outputs",
     "regression_age_sex/Benchmark_IXI_HCP/DenseNet/Dx/block_outputs",
     "scz_prediction/Benchmark_Transfer/No_Pretraining/schizconnect_vip/DenseNet/block_outputs"
@@ -89,6 +103,7 @@ exp_names = [
     "Random",
     "Random",
 ]
+
 nb_folds = [1, 5, 1, 5, 1, 5, 1, 5, 5, 5]
 colors = ["blue", "green", "orange", "cyan", "red"]
 
@@ -97,22 +112,16 @@ metrics = {'auc': {path: {b: [] for b in blocks} for path in paths},
 metrics = get_pickle_obj('metrics_TL_sup_unsup.pkl')
 ## Plots the performance of pretrained/fine-tuned networks after each block
 for i, (path, train_file, test_file, exp) in enumerate(zip(paths, training_filenames, testing_filenames, exp_names)):
-    # for j, b in enumerate(blocks):
-    #     for fold in range(nb_folds[i]):
-    #
-    #         # Train the model with a logistic regression
-    #         data = get_pickle_obj(os.path.join(root, path, train_file.format(b=j+1, f=fold)))
-    #         X, y = np.array(data['y']).reshape(len(data['y']),-1), np.array(data['y_true']).ravel()
-    #         model = LogisticRegression(solver='liblinear').fit(X, y)
-    #
-    #         # Test the model on BSNIP
-    #         testing_data = get_pickle_obj(os.path.join(root, path, test_file.format(b=j+1, f=fold)))
-    #         X_test, y_test = np.array(testing_data['y']).reshape(len(testing_data['y']),-1), \
-    #                          np.array(testing_data['y_true']).ravel()
-    #         y_pred = model.predict_proba(X_test)[:,1]
-    #
-    #         metrics['auc'][path][b].append(roc_auc_score(y_test, y_pred))
-    #         metrics['balanced_accuracy'][path][b].append(balanced_accuracy_score(y_test, y_pred>0.5))
+    for j, b in enumerate(blocks):
+        for fold in range(nb_folds[i]):
+
+            # Train the model with a logistic regression
+            data = get_pickle_obj(os.path.join(root, path, train_file.format(b=j+1, f=fold)))
+            testing_data = get_pickle_obj(os.path.join(root, path, test_file.format(b=j+1, f=fold)))
+
+            y_test, y_pred = train_linear_model(data, testing_data)
+            metrics['auc'][path][b].append(roc_auc_score(y_test, y_pred))
+            metrics['balanced_accuracy'][path][b].append(balanced_accuracy_score(y_test, y_pred>0.5))
     seaborn.lineplot(x=[b+1 for b in range(len(blocks)) for _ in range(nb_folds[i])],
                      y=[metrics['auc'][path][b][k] for b in blocks for k in range(nb_folds[i])],
                      label=exp, ax=axes[i%2], marker='o', color=colors[i//2])
@@ -169,6 +178,112 @@ axes[2].set_xticklabels(blocks)
 axes[2].set_title("(3) After Fine-Tuning on Dx\nWith Frozen Blocks", fontweight="bold")
 fig.savefig('TL_DenseNet_hidden_representations.png')
 plt.show()
+
+
+## Exp i -- Fine tuning only the last layer
+# Train the model with a logistic regression
+
+## SimCLR Pretraining
+root = '/neurospin/psy_sbox/bd261576/checkpoints/self_supervision/simCLR/DenseNet/N_1600'
+epochs = [[99], [99], [10], [299, 199, 99, 80]] # Exp 0, 1, 2, 3
+val_epochs = [[99], [50], [10], [299, 199, 99, 80]]
+exp_3 = ['unsupervised/noisy_spike_motion_crop_DA/', 'age_supervision/noisy_spike_motion_crop_DA',
+         'age_supervision/noisy_spike_motion_DA/', 'unsupervised/noisy_spike_motion_cutout_DA']
+for i, (list_e,list_v_e) in enumerate(zip(epochs, val_epochs)):
+    if i != 3:
+        continue
+    for k, (e, v_e) in enumerate(zip(list_e, list_v_e)):
+        path_spec = 'exp_%i' if i < 3 else 'exp_%i/'+exp_3[k]
+        baseline = History.load(os.path.join(root, path_spec%i, 'Validation_DenseNet_HCP_IXI_0_epoch_%i.pkl'%v_e))
+        data_train = get_pickle_obj(os.path.join(root, path_spec%i, 'block_outputs/DenseNet_Block4_SCZ_VIP_fold0_epoch%i.pkl'%e))
+        data_test = get_pickle_obj(os.path.join(root, path_spec%i, 'block_outputs/DenseNet_Block4_BSNIP_fold0_epoch%i.pkl'%e))
+        y_test, y_pred = train_linear_model(data_train, data_test)
+        if 'MAE on validation set' in baseline.metrics:
+            print('Exp {i}:\n\tPretext task MAE={mae}, Acc={acc}\n\tAUC={auc}\n\tBAcc={bacc}'.
+                  format(i=i, mae=baseline['MAE on validation set'][1][-1],
+                         acc=baseline['accuracy on validation set'][1][-1],
+                         auc=roc_auc_score(y_test, y_pred),
+                         bacc=balanced_accuracy_score(y_test, y_pred>0.5)))
+        else:
+            print('Exp {i}:\n\tPretext task Acc={acc}\n\tAUC={auc}\n\tBAcc={bacc}'.
+                  format(i=i, acc=baseline['accuracy on validation set'][1][-1],
+                         auc=roc_auc_score(y_test, y_pred),
+                         bacc=balanced_accuracy_score(y_test, y_pred>0.5)))
+
+## Age + Sex/Age Pretraining
+root = '/neurospin/psy_sbox/bd261576/checkpoints/regression_age_sex/Benchmark_IXI_HCP/DenseNet/'
+pb = ['Age', 'Sex', 'Sex_Age']
+nb_samples = ['', 'N_10K']
+nb_epochs = [99, 149]
+dbs = ['HCP_IXI', 'Big_Healthy']
+
+for p in pb:
+    for (samples,e, db) in zip(nb_samples, nb_epochs, dbs):
+        baseline = History.load(os.path.join(root, samples, '{pb}/Validation_DenseNet_{pb}_{db}_0_epoch_{e}.pkl'.
+                                             format(pb=p, db=db, e=e)))
+        data_train = get_pickle_obj(
+            os.path.join(root, samples, '{pb}/block_outputs/DenseNet_Block4_SCZ_VIP_fold0_epoch{e}.pkl'.
+                         format(pb=p, e=e)))
+        data_test = get_pickle_obj(
+            os.path.join(root, samples, '{pb}/block_outputs/DenseNet_Block4_BSNIP_fold0_epoch{e}.pkl'.
+                         format(pb=p, e=e)))
+        y_test, y_pred = train_linear_model(data_train, data_test)
+        loss, p_auc = None, None
+        if 'validation_loss' in baseline.metrics:
+            loss = baseline['validation_loss'][1][-1]
+        if 'roc_auc on validation set' in baseline.metrics:
+            p_auc = baseline['roc_auc on validation set'][1][-1]
+        print('Exp {p}:\n\tPretext task loss={loss}, AUC={pretext_auc}\n\tAUC={auc}, Bacc={bacc}'.
+              format(p=p, loss=loss,
+                     pretext_auc=p_auc,
+                     auc=roc_auc_score(y_test, y_pred),
+                     bacc=balanced_accuracy_score(y_test, y_pred>0.5)))
+
+## Color histogram of Images cropped and with cutout
+from pynet.transforms import *
+from pynet.augmentation import cutout
+from nilearn.plotting import plot_anat
+from nibabel import Nifti1Image
+
+input_transforms = [Crop((1, 121, 128, 121)), Padding([1, 128, 128, 128]), Normalize()]
+manager = DataManager(CONFIG['cat12']['input_path'], CONFIG['cat12']['metadata_path'],
+                      batch_size=4,
+                      number_of_folds=5,
+                      custom_stratification=CONFIG['db']["healthy"],
+                      input_transforms=input_transforms,
+                      pin_memory=True,
+                      drop_last=False,
+                      device='cuda')
+
+train_iter = iter(manager.get_dataloader(train=True).train)
+X_train = next(train_iter).inputs.detach().cpu().numpy()
+tfs = [lambda x: x,
+       Crop((1, 64, 64, 64), "random", resize=True),
+       Crop((1, 64, 64, 64), "random", resize=False, keep_dim=True),
+       lambda x: cutout(x, patch_size=40)]
+reps = [1, 2, 2, 2]
+tf_names = ['Original Image', 'Crop+Resize', 'Crop', 'Cutout']
+
+cols = 1+np.sum(reps)
+fig, axes = plt.subplots(len(X_train)+1, cols, figsize=(cols*5, (len(X_train)+1)*5), sharey=True)
+for i, x in enumerate(X_train, start=1):
+    axes[i, 0].text(0.5, 0.5, 'Image %i'%i, fontsize=20)
+    axes[i, 0].axis('off')
+    for c, (tf, rep, name) in enumerate(zip(tfs, reps, tf_names)):
+        for j in range(rep):
+            current_j = np.concatenate([[0], np.cumsum(reps)])[c]+j+1
+            x_tf = tf(x)
+            histogram, bin_edges = np.histogram(x_tf, bins=100, range=(-0.7, 0.1))
+            axes[i, current_j].plot(bin_edges[:-1], histogram/128**3)
+            axes[i, current_j].set_ylim([0, 1])
+            axes[0, current_j].set_title('{name} {r}'.format(name=name, r=j+1) if rep > 1 else name, fontsize=20)
+            if i == 1:
+                axes[0, 0].axis('off')
+                plot_anat(Nifti1Image(x_tf[0], np.eye(4)), cut_coords=[50], display_mode='x',
+                          axes=axes[0, current_j], annotate=True,
+                          draw_cross=False, black_bg='auto', vmax=5, vmin=0)
+fig.savefig('color_histogram_crop_cutout.png')
+
 
 ## Sanity Check between Linear Regression and Fine-Tuning
 from pynet.models.densenet import *

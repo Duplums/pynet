@@ -110,7 +110,8 @@ class Base(Observable):
                 elif isinstance(checkpoint, dict):
                     if "model" in checkpoint:
                         try:
-                            self.model.load_state_dict(checkpoint["model"], strict=False)
+                            unexpected= self.model.load_state_dict(checkpoint["model"], strict=False)
+                            self.logger.info('Model loading info: {}'.format(unexpected))
                             self.logger.info('Model loaded')
                         except BaseException as e:
                             self.logger.error('Error while loading the model\'s weights: %s' % str(e))
@@ -136,7 +137,7 @@ class Base(Observable):
 
     def training(self, manager, nb_epochs, checkpointdir=None, fold_index=None,
                  scheduler=None, with_validation=True, with_visualization=False,
-                 nb_epochs_per_saving=1, exp_name=None, standard_optim=True):
+                 nb_epochs_per_saving=1, exp_name=None, standard_optim=True, gpu_time_profiling=False):
         """ Train the model.
 
         Parameters
@@ -203,7 +204,8 @@ class Base(Observable):
             for epoch in range(nb_epochs):
                 self.notify_observers("before_epoch", epoch=epoch, fold=fold)
                 loss, values = self.train(loader.train, train_history,
-                                          train_visualizer, fold, epoch, standard_optim=standard_optim)
+                                          train_visualizer, fold, epoch, standard_optim=standard_optim,
+                                          gpu_time_profiling=gpu_time_profiling)
                 train_history.summary()
                 if scheduler is not None:
                     scheduler.step()
@@ -238,7 +240,8 @@ class Base(Observable):
                 self.notify_observers("after_epoch", epoch=epoch, fold=fold)
         return train_history, valid_history
 
-    def train(self, loader, history=None, visualizer=None, fold=None, epoch=None, standard_optim=True):
+    def train(self, loader, history=None, visualizer=None, fold=None, epoch=None, standard_optim=True,
+              gpu_time_profiling=False):
         """ Train the model on the trained data.
 
         Parameters
@@ -259,9 +262,10 @@ class Base(Observable):
 
         values = {}
         iteration = 0
-
+        if gpu_time_profiling:
+            gpu_time_per_batch = []
         if not standard_optim:
-            loss, values = self.model(loader, pbar=pbar, visualizer=visualizer)
+            loss, values = self.model(iter(loader), pbar=pbar, visualizer=visualizer)
         else:
             losses = []
             y_pred = []
@@ -280,7 +284,19 @@ class Base(Observable):
                 list_targets.append(_targets)
     
                 self.optimizer.zero_grad()
+                if gpu_time_profiling:
+                    start_event = torch.cuda.Event(enable_timing=True)
+                    end_event = torch.cuda.Event(enable_timing=True)
+                    start_event.record()
+
                 outputs = self.model(inputs)
+
+                if gpu_time_profiling:
+                    end_event.record()
+                    torch.cuda.synchronize()
+                    elapsed_time_ms = start_event.elapsed_time(end_event)
+                    gpu_time_per_batch.append(elapsed_time_ms)
+
                 batch_loss = self.loss(outputs, *list_targets)
                 batch_loss.backward()
                 self.optimizer.step()
@@ -310,6 +326,11 @@ class Base(Observable):
                 values[name] = float(metric(torch.tensor(y_pred), torch.tensor(y_true)))
         if history is not None:
             history.log((fold, epoch), loss=loss, **values)
+
+        if gpu_time_profiling:
+            self.logger.info("GPU Time Statistics over 1 epoch:\n\t- {:.2f} +/- {:.2f} ms calling model(data) per batch"
+                                                              "\n\t- {:.2f} ms total time over 1 epoch ({} batches)".format(
+                np.mean(gpu_time_per_batch), np.std(gpu_time_per_batch), np.sum(gpu_time_per_batch), nb_batch))
         pbar.close()
         return loss, values
 
@@ -396,7 +417,7 @@ class Base(Observable):
         with torch.no_grad():
             y, y_true, X = [], [], []
             if not standard_optim:
-                loss, values, y, y_true, X = self.model(loader, pbar=pbar)
+                loss, values, y, y_true, X = self.model(iter(loader), pbar=pbar)
             else:
                 for dataitem in loader:
                     pbar.update()

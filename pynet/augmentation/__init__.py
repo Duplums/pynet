@@ -19,6 +19,7 @@ import numpy as np
 from .spatial import affine
 from .spatial import flip
 from .spatial import deformation
+from .spatial import cutout
 from .intensity import add_blur
 from .intensity import add_noise
 from .intensity import add_ghosting
@@ -30,7 +31,6 @@ from .intensity import add_swap
 
 # Global parameters
 logger = logging.getLogger("pynet")
-
 
 class Transformer(object):
     """ Class that can be used to register a sequence of transformations.
@@ -52,10 +52,10 @@ class Transformer(object):
             to nearest neighboor via the 'order' transform parameter.
         """
         self.transforms = []
-        self.seed = None
         self.dtype = "all"
         self.with_channel = with_channel
         self.output_label = output_label
+
 
     def register(self, transform, probability=1, apply_to=None, **kwargs):
         """ Register a new transformation.
@@ -102,12 +102,11 @@ class Transformer(object):
             if (self.output_label and self.dtype == "output" and
                     "order" in kwargs):
                 kwargs["order"] = 0
-            np.random.seed(self.seed)
             if np.random.rand() < trf.probability:
                 logger.debug("Applying {0}...".format(trf.transform))
                 for channel_id in range(transformed.shape[0]):
                     transformed[channel_id] = trf.transform(
-                        transformed[channel_id], seed=self.seed, **kwargs)
+                        transformed[channel_id], **kwargs)
                 logger.debug("Done.")
         if not self.with_channel:
             transformed = transformed[0]

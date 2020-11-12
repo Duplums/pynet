@@ -50,7 +50,8 @@ class BaseTrainer():
                                                            exp_name=self.args.exp_name,
                                                            fold_index=self.args.folds,
                                                            standard_optim=getattr(self.net, 'std_optim', True),
-                                                           with_visualization=self.args.with_visualization)
+                                                           with_visualization=self.args.with_visualization,
+                                                           gpu_time_profiling=self.args.profile_gpu)
 
         return train_history, valid_history
 
@@ -85,16 +86,19 @@ class BaseTrainer():
     @staticmethod
     def build_network(name, num_classes, args, **kwargs):
         if name == "resnet18":
-            net = resnet18(pretrained=False, num_classes=num_classes, concrete_dropout=args.concrete_dropout, **kwargs)
+            net = resnet18(pretrained=False, num_classes=num_classes, concrete_dropout=args.concrete_dropout,
+                           dropout_rate=args.dropout, **kwargs)
         elif name == "resnet34":
             net = resnet34(pretrained=False, num_classes=num_classes, concrete_dropout=args.concrete_dropout,
-                           prediction_bias=False, **kwargs)
+                           prediction_bias=False, dropout_rate=args.dropout, **kwargs)
         elif name == "light_resnet34":
-            net = resnet34(pretrained=False, num_classes=num_classes, initial_kernel_size=3, **kwargs)
+            net = resnet34(pretrained=False, num_classes=num_classes, initial_kernel_size=3, dropout_rate=args.dropout,
+                           **kwargs)
         elif name == "resnet50":
-            net = resnet50(pretrained=False, num_classes=num_classes, concrete_dropout=args.concrete_dropout, **kwargs)
+            net = resnet50(pretrained=False, num_classes=num_classes, concrete_dropout=args.concrete_dropout,
+                           dropout_rate=args.dropout, **kwargs)
         elif name == "resnext50":
-            net = resnext50_32x4d(pretrained=False, num_classes=num_classes, **kwargs)
+            net = resnext50_32x4d(pretrained=False, num_classes=num_classes, dropout_rate=args.dropout, **kwargs)
         elif name == "resnet101":
             net = resnet101(pretrained=False, num_classes=num_classes, concrete_dropout=args.concrete_dropout, **kwargs)
         elif name == "vgg11":
@@ -136,9 +140,11 @@ class BaseTrainer():
             net = _densenet('exp9', 16, (6, 12, 16), 64, False, False, num_classes=num_classes, drop_rate=args.dropout,
                             bayesian=args.bayesian, concrete_dropout=args.concrete_dropout, **kwargs)
         elif name == 'cole_net':
-            net = ColeNet(num_classes, [1, 128, 128, 128], concrete_dropout=args.concrete_dropout)
+            net = ColeNet(num_classes, [1, 128, 128, 128], dropout_rate=args.dropout,
+                          concrete_dropout=args.concrete_dropout)
         elif name == "alpha_wgan":
-            net = Alpha_WGAN(lr=args.lr, device=('cuda' if args.cuda else 'cpu'), use_kl=True, path_to_file=None)
+            net = Alpha_WGAN(lr=args.lr, device=('cuda' if args.cuda else 'cpu'), latent_dim=1000,
+                             use_kl=None, path_to_file=None)
         elif name == "alpha_wgan_predictors":
             net = Alpha_WGAN_Predictors(latent_dim=1000)
         elif name == "psy_net":
@@ -159,26 +165,13 @@ class BaseTrainer():
     def get_data_augmentations(augmentations):
         if augmentations is None or len(augmentations) == 0:
             return None
-        # transformations = [
-        #     original_img,
-        #     flip(original_img, axis=0),
-        #     add_blur(original_img, sigma=1),
-        #     add_noise(original_img, sigma=0.2),
-        #     Crop((85, 101, 85), "random", resize=True)(original_img),
-        #     affine(original_img, rotation=10, translation=0, zoom=0),
-        #     add_ghosting(original_img, intensity=1, n_ghosts=5, axis=0),
-        #     add_motion(original_img, rotation=40, translation=20),
-        #     add_spike(original_img, intensity=1, n_spikes=20),
-        #     add_biasfield(original_img, coefficients=0.7),
-        #     add_swap(original_img, num_iterations=20)
-        # ]
 
         aug2tf = {
             'flip': (flip, dict()),
-            'blur': (add_blur, {'sigma':(0.1, 1)}),
-            'noise': (add_noise, {'sigma': (0.1, 0.5)}),
-            'resized_crop': (Crop((85, 101, 85), "random", resize=True), dict()),
-            'affine': (affine, {'rotation': 40, 'translation': 20, 'zoom': 0.2}),
+            'blur': (add_blur, {'snr': 1000}),
+            'noise': (add_noise, {'snr': 1000}),
+            'resized_crop': (Crop((115, 138, 115), "random", resize=True), dict()),
+            'affine': (affine, {'rotation': 5, 'translation': 10, 'zoom': 0}),
             'ghosting': (add_ghosting, {'intensity': 1, 'axis': 0}),
             'motion': (add_motion, {'n_transforms': 3, 'rotation': 40, 'translation': 10}),
             'spike': (add_spike, {'n_spikes': 10, 'intensity': 1}),
@@ -194,7 +187,6 @@ class BaseTrainer():
 
     @staticmethod
     def build_data_manager(args, **kwargs):
-        df = pd.read_csv(args.metadata_path, sep='\t')
         labels = args.labels or []
         add_to_input = None
         data_augmentation = BaseTrainer.get_data_augmentations(args.da)
@@ -219,15 +211,16 @@ class BaseTrainer():
                                         HardNormalization()]
                 else:
                     input_transforms = [Crop((1, 121, 128, 121)), Padding([1, 128, 128, 128], mode='constant'), Normalize()]
-            elif args.preproc == 'quasi_raw': # Size [182 x 218 x 182], 1mm³ (rescale 1/1.5 to resample at 1.5mm³)
+            elif args.preproc == 'quasi_raw': # Size [122 x 146 x 122], 1.5mm³
                 if args.net == "alpha_wgan":
-                    input_transforms = [Rescale(1/1.5), Crop((1, 121, 128, 121)), Padding([1, 128, 128, 128], mode='constant'),
+                    input_transforms = [Crop((1, 121, 128, 121)), Padding([1, 128, 128, 128], mode='constant'),
                                         HardNormalization()]
                 else:
-                    input_transforms = [Rescale(1/1.5), Crop((1, 121, 128, 121)), Padding([1, 128, 128, 128], mode='constant'),
+                    input_transforms = [Crop((1, 121, 128, 121)), Padding([1, 128, 128, 128], mode='constant'),
                                         Normalize()]
 
         ## Set the basic mapping between a label and an integer
+        df = pd.concat([pd.read_csv(p, sep=',') for p in args.metadata_path], ignore_index=True, sort=False)
 
         # <label>: [LabelMapping(), IsCategorical]
         known_labels = {'age': [LabelMapping(), False],

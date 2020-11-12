@@ -13,8 +13,8 @@ if __name__=="__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--preproc", type=str, default='cat12', choices=['cat12', 'quasi_raw'])
-    parser.add_argument("--input_path", type=str)
-    parser.add_argument("--metadata_path", type=str)
+    parser.add_argument("--input_path", type=str, nargs='+')
+    parser.add_argument("--metadata_path", type=str, nargs='+')
     parser.add_argument("--pretrained_path", type=str)
     parser.add_argument("--freeze_until_layer", type=str)
     parser.add_argument("--checkpoint_dir", type=str, default="/neurospin/psy_sbox/bd261576/checkpoints")
@@ -62,6 +62,7 @@ if __name__=="__main__":
                                                                       "optimizer's weigth")
     parser.add_argument("--with_logit", action="store_true")
     parser.add_argument("--predict", action="store_true")
+    parser.add_argument("--profile_gpu", action="store_true", help="Profile the GPU time taken by a model during the training")
     parser.add_argument("--cuda", type=bool, default=True)
 
     # Kind of tests
