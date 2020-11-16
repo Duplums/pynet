@@ -135,9 +135,10 @@ class Base(Observable):
 
         self.model = self.model.to(self.device)
 
-    def training(self, manager, nb_epochs, checkpointdir=None, fold_index=None,
+    def training(self, manager, nb_epochs, checkpointdir=None, fold_index=None, epoch_index=None,
                  scheduler=None, with_validation=True, with_visualization=False,
-                 nb_epochs_per_saving=1, exp_name=None, standard_optim=True, gpu_time_profiling=False):
+                 nb_epochs_per_saving=1, exp_name=None, standard_optim=True,
+                 gpu_time_profiling=False):
         """ Train the model.
 
         Parameters
@@ -152,6 +153,8 @@ class Base(Observable):
         fold_index: int or [int] default None
             the index(es) of the fold(s) to use for the training, default use all the
             available folds.
+        epoch_index: int, default None
+            the iteration where to start the counting from
         scheduler: torch.optim.lr_scheduler, default None
             a scheduler used to reduce the learning rate.
         with_validation: bool, default True
@@ -187,6 +190,8 @@ class Base(Observable):
                 folds = [fold_index]
             elif isinstance(fold_index, list):
                 folds = fold_index
+        if epoch_index is None:
+            epoch_index = 0
         init_optim_state = deepcopy(self.optimizer.state_dict())
         init_model_state = deepcopy(self.model.state_dict())
         if scheduler is not None:
@@ -203,9 +208,11 @@ class Base(Observable):
                 fold_index=fold)
             for epoch in range(nb_epochs):
                 self.notify_observers("before_epoch", epoch=epoch, fold=fold)
-                loss, values = self.train(loader.train, train_history,
-                                          train_visualizer, fold, epoch, standard_optim=standard_optim,
+                loss, values = self.train(loader.train, train_visualizer, fold, epoch,
+                                          standard_optim=standard_optim,
                                           gpu_time_profiling=gpu_time_profiling)
+
+                train_history.log((fold, epoch+epoch_index), loss=loss, **values)
                 train_history.summary()
                 if scheduler is not None:
                     scheduler.step()
@@ -215,19 +222,19 @@ class Base(Observable):
                         and epoch > 0:
                     checkpoint(
                         model=self.model,
-                        epoch=epoch,
+                        epoch=epoch+epoch_index,
                         fold=fold,
                         outdir=checkpointdir,
                         name=exp_name,
                         optimizer=self.optimizer)
                     train_history.save(
                         outdir=checkpointdir,
-                        epoch=epoch,
+                        epoch=epoch+epoch_index,
                         fold=fold)
                 if with_validation:
                     _, _, _, loss, values = self.test(loader.validation,
                                                       standard_optim=standard_optim)
-                    valid_history.log((fold, epoch), validation_loss=loss, **values)
+                    valid_history.log((fold, epoch+epoch_index), validation_loss=loss, **values)
                     valid_history.summary()
                     if valid_visualizer is not None:
                         valid_visualizer.refresh_current_metrics()
@@ -235,12 +242,12 @@ class Base(Observable):
                             and epoch > 0:
                         valid_history.save(
                             outdir=checkpointdir,
-                            epoch=epoch,
+                            epoch=epoch+epoch_index,
                             fold=fold)
                 self.notify_observers("after_epoch", epoch=epoch, fold=fold)
         return train_history, valid_history
 
-    def train(self, loader, history=None, visualizer=None, fold=None, epoch=None, standard_optim=True,
+    def train(self, loader, visualizer=None, fold=None, epoch=None, standard_optim=True,
               gpu_time_profiling=False):
         """ Train the model on the trained data.
 
@@ -324,8 +331,6 @@ class Base(Observable):
                 if name not in values:
                     values[name] = 0
                 values[name] = float(metric(torch.tensor(y_pred), torch.tensor(y_true)))
-        if history is not None:
-            history.log((fold, epoch), loss=loss, **values)
 
         if gpu_time_profiling:
             self.logger.info("GPU Time Statistics over 1 epoch:\n\t- {:.2f} +/- {:.2f} ms calling model(data) per batch"

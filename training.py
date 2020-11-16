@@ -49,6 +49,7 @@ class BaseTrainer():
                                                            nb_epochs_per_saving=self.args.nb_epochs_per_saving,
                                                            exp_name=self.args.exp_name,
                                                            fold_index=self.args.folds,
+                                                           epoch_index=self.args.start_from,
                                                            standard_optim=getattr(self.net, 'std_optim', True),
                                                            with_visualization=self.args.with_visualization,
                                                            gpu_time_profiling=self.args.profile_gpu)

@@ -17,6 +17,7 @@ def train_linear_model(X_train, y_train, X_val, y_val, reg=True, hyperparams=Non
     X_val, y_val = np.array(X_val).reshape(n_val, -1), np.array(y_val).reshape(n_val, -1)
     if scaler is not None:
         X_train = scaler.fit_transform(X_train)
+        X_val = scaler.fit_transform(X_val)
     if hyperparams is None:
         hyperparams = dict()
     params_grid = ParameterGrid(hyperparams)
@@ -29,6 +30,9 @@ def train_linear_model(X_train, y_train, X_val, y_val, reg=True, hyperparams=Non
             best_model = model
             best_params = params
             best_score = score
+            if reg:
+                y_ = best_model.predict(X_val)
+                print('MAE (Val) = {}'.format(np.mean(np.abs(y_-y_val))), flush=True)
     return best_model, best_params, best_score
 
 
@@ -62,6 +66,8 @@ scalers = [None, StandardScaler(copy=True)]
 
 ## Actual loading of data + training
 for (scaler, preproc) in zip(scalers, preprocs):
+    if preproc == '':
+        continue
     input_path = os.path.join(root, data_dirs[preproc]['input_path'])
     metadata_path = os.path.join(root, data_dirs[preproc]['metadata_path'])
     print('Loading data...', flush=True)
@@ -70,7 +76,7 @@ for (scaler, preproc) in zip(scalers, preprocs):
     for i_pb, (pb, label_map, label, strat_label_map, strat_label, db, db_config, hyperparams) in \
         enumerate(zip(pbs, label_mappings, labels, strat_label_mappings,
                       strat_labels, dbs, dbs_config, models_hyperparams)):
-        if pb == 'Age' and preproc == '':
+        if pb != "Dx":
             continue
         for (N, nb_folds) in zip(nb_training_samples[i_pb], total_nb_folds[i_pb]):
             manager = DataManager(None, metadata_path,
@@ -89,7 +95,7 @@ for (scaler, preproc) in zip(scalers, preprocs):
                 X_train = data[train_indices]
                 y_train = np.array([label_map(label) for label in manager.labels[train_indices]])
                 X_val = data[val_indices]
-                y_val = np.array([label_map(label) for label in manager.labels[val_indices]])
+                y_val = np.array([label_map(label) for label in manager.labels[val_indices]]).ravel()
 
                 model, best_params, best_score = train_linear_model(X_train, y_train, X_val, y_val,
                                                                     reg=(pb == 'Age'),
@@ -103,9 +109,10 @@ for (scaler, preproc) in zip(scalers, preprocs):
                 X_test = data[test_indices].reshape(len(test_indices), -1)
                 if scaler is not None:
                     X_test = scaler.fit_transform(X_test)
-                y_test = np.array([label_map(label) for label in manager.labels[test_indices]])
+                y_test = np.array([label_map(label) for label in manager.labels[test_indices]]).ravel()
                 if pb=="Age":
                     y_pred = model.predict(X_test)
+                    print('\n\t*MAE on test: {}'.format(np.mean(np.abs(y_pred - y_test))))
                 else:
                     y_pred = model.predict_proba(X_test)[:, 1]
                 del(X_test)

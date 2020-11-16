@@ -16,7 +16,7 @@ class SimCLRDataset(ArrayDataset):
 
         if self.self_supervision is None:
             compose_transforms = Transformer()
-            #compose_transforms.register(add_swap, probability=0.5, num_iterations=20)
+            compose_transforms.register(add_swap, probability=0.5, num_iterations=20)
             compose_transforms.register(flip, probability=0.5, axis=0)
             compose_transforms.register(add_blur, probability=0.5, sigma=(0.1, 1))
             compose_transforms.register(add_ghosting, intensity=1, probability=0.5, axis=0)
@@ -24,7 +24,7 @@ class SimCLRDataset(ArrayDataset):
             compose_transforms.register(add_noise, sigma=(0.1, 1), probability=0.5)
             compose_transforms.register(add_spike, n_spikes=2, probability=0.5)
             compose_transforms.register(cutout, probability=0.5, patch_size=40, inplace=True)
-            compose_transforms.register(Crop((64, 64, 64), "random", resize=True), probability=0.5)
+            #compose_transforms.register(Crop((64, 64, 64), "random", resize=False, keep_dim=True), probability=0.5)
             #compose_transforms.register(add_biasfield, probability=0.1, coefficients=0.5)
 
             self.self_supervision = compose_transforms
@@ -75,7 +75,7 @@ class SimCLRDataset(ArrayDataset):
 
 class SimCLR(Base):
 
-    def train(self, loader, history=None, visualizer=None, fold=None, epoch=None, **kwargs):
+    def train(self, loader, visualizer=None, fold=None, epoch=None, **kwargs):
         """ Train the model on the trained data.
 
         Parameters
@@ -135,8 +135,6 @@ class SimCLR(Base):
 
         loss = np.mean(losses)
 
-        if history is not None:
-            history.log((fold, epoch), loss=loss, **values)
         pbar.close()
         return loss, values
 

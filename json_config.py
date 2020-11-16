@@ -16,9 +16,9 @@ CONFIG = {
                  'diagnosis': ['control', 'schizophrenia']}
             },
         'tiny_scz_kfolds': {
-            'train': {'study': ['BSNIP'],
+            'train': {'study': ['SCHIZCONNECT-VIP'],
                       'diagnosis': ['control', 'schizophrenia']},
-            'test': {'study': ['SCHIZCONNECT-VIP'],
+            'test': {'study': ['BSNIP'],
                      'diagnosis': ['control', 'schizophrenia']}
             },
         'big_healthy': {

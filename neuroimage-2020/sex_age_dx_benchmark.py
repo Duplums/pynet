@@ -299,10 +299,10 @@ plt.savefig('delta_age_err_analysis.png')
 ### Learning curves
 
 root = '/neurospin/psy_sbox/bd261576/checkpoints/regression_age_sex/Benchmark_IXI_HCP'
-nets = ['ResNet34', 'DenseNet', 'ColeNet', 'TinyDenseNet_Exp9'] # LightResNet ? maybe not...
-net_names = ['ResNet34', 'DenseNet', 'tiny-VGG', 'tiny-DenseNet']
-path_nets = ['ResNet/ResNet34', 'DenseNet', 'ColeNet', 'TinyDenseNet']
-preprocessings = ['quasi_raw', '']
+net_names = ['ResNet34', 'DenseNet', 'tiny-VGG', 'tiny-DenseNet', 'Linear Model']
+nets = ['ResNet34', 'DenseNet', 'ColeNet', 'TinyDenseNet_Exp9', "LinearModel"]
+path_nets = ['ResNet/ResNet34', 'DenseNet', 'ColeNet', 'TinyDenseNet', 'LinearModel']
+preprocessings = ['']
 
 all_metrics = {preproc: {pb: dict() for pb in ['Age', 'Sex', 'Dx']} for preproc in preprocessings}
 nb_training_samples = [[100, 300, 500, 1000, 1600],[100, 300, 500, 1000, 1600], [100, 300, 500]]
@@ -310,7 +310,8 @@ nb_epochs = [299]
 
 X = [[n for n in training for k in range(5+5*(n<500))] for i,training in enumerate(nb_training_samples)]
 
-all_results = {preproc: {pb: {net: [[[0 for k in range(5+5*(n<500))]
+all_results = {preproc: {pb: {net if net!="LinearModel" else ('Ridge' if pb=='Age' else 'LogisticRegression'):
+                                  [[[0 for k in range(5+5*(n<500))]
                                      for n in nb_training_samples[n_pb]]
                                     for e in nb_epochs]
                               for net in nets}
@@ -323,7 +324,11 @@ for preproc in preprocessings:
     for n_pb, pb in enumerate(["Age", "Sex", "Dx"]):
         db = "HCP_IXI" if pb != "Dx" else "SCZ_VIP"
         for (name, net, path_net) in zip(net_names, nets, path_nets):
+            if net == 'LinearModel':
+                net = "Ridge" if pb == "Age" else "LogisticRegression"
             for i, e in enumerate(nb_epochs):
+                if name == "Linear Model":
+                    e = 100
                 for j, n in enumerate(nb_training_samples[n_pb]):
                     for k in range(5+5*(n<500)):
                         hyperparams = "_step_size_scheduler_10_gamma_0.7" \
@@ -425,24 +430,11 @@ problems = ['Dx', 'Sex']
 epochs = [99, 299]
 dbs = ["SCZ_VIP", "HCP_IXI"]
 colors = ['green', 'red']
-# Calibration's improvement
-fig, big_axes = plt.subplots(len(problems), 1, figsize=(3 * 5, len(problems) * 5), sharey=True, squeeze=False)
-for row, (big_ax, pb_name) in enumerate(zip(big_axes[:, 0], problems), start=1):
-    big_ax.set_title('{pb} Prediction'.format(pb=pb_name), fontweight='bold', fontsize=16)
-    big_ax.axis('off')
-    big_ax._frameon = False
-    big_ax.title.set_position([.5, 1.08])
+
+# Calibration's improvement in terms of ECE
+fig_ece, axes_ece = plt.subplots(1, len(problems), figsize=(len(problems)*5, 5), sharex=True, squeeze=False)
 for j, (pb, db, e) in enumerate(zip(problems, dbs, epochs)):
-    ax = fig.add_subplot(len(problems), 3, 3 * j + 1)
-    ax.set_ylabel('ECE', color='black')
-    ax.tick_params(axis='y', colors='black')
-    ax.set_ylim([0, 0.25])
-    ax.set_title("Calibration Performance", fontsize=13)
-    ax.set_xticks(ticks=T)
-    ax.set_xlabel('T')
-    calibration_curves_axis = []
-    for l, t in enumerate([T[0], T[-1]], start=1):
-        calibration_curves_axis.append(fig.add_subplot(len(problems), 3, 3 * j + 1 + l))
+    ax = axes_ece[0, j]
     for i, (net, name, path) in enumerate(zip(nets, net_names, path_nets)):
         res = [get_pickle_obj(os.path.join(root, path, 'N_%i'%N, pb,'Ensembling',
                                           "EnsembleTest_{net}_{pb}_{db}_fold{fold}_epoch{e}.pkl".
@@ -453,36 +445,68 @@ for j, (pb, db, e) in enumerate(zip(problems, dbs, epochs)):
         ECE = [[ECE_score(y_pred[k,:,:t].mean(axis=1), y_true[k]) for k in range(5)] for t in T]
         ax.errorbar(T, [np.mean(ece) for ece in ECE], yerr=[np.std(ece) for ece in ECE], capsize=3, ecolor=colors[i],
                     color=colors[i], label=name)
-        # ax2 = ax.twinx()
-        # ax2.errorbar(T, [np.mean(auc) for auc in AUC], yerr=[np.std(auc) for auc in AUC], capsize=3, ecolor='blue', color='blue')
-        # ax2.set_ylabel('AUC', color='blue')
-        # ax2.tick_params(axis='y', colors='blue')
-        # ax2.set_ylim([0.5,0.95])
-
-        for l, t in enumerate([T[0], T[-1]], start=0):
-            frac_pos_and_mean_pred_proba = [calibration_curve(y_true[fold], y_pred[fold,:,:t].mean(axis=1))
-                                         for fold in range(5)]
-            hist, bins = np.histogram(y_pred[0,:,:t].mean(axis=1), bins=5) # we assume they are all the same across the folds...
-            calibration_curves_axis[l].bar(bins[:-1], hist/len(y_true[0]), np.diff(bins), ls='--',
-                   fill=False, edgecolor=colors[i], align='edge')
-            seaborn.lineplot(x=[mean_pred_prob for _ in range(5) for mean_pred_prob in
-                                np.mean([frac_mean_k[1] for frac_mean_k in frac_pos_and_mean_pred_proba], axis=0)],
-                             y=[m for frac_mean_k in frac_pos_and_mean_pred_proba for m in frac_mean_k[0]],
-                             marker='o', ax=calibration_curves_axis[l], color=colors[i], label=name)
-            #ax.plot(mean_pred_proba, frac_pos, 's-', color='red')
-            calibration_curves_axis[l].set_ylabel('Fraction of samples / Accuracy', color='black')
-            calibration_curves_axis[l].tick_params(axis='y', colors='black')
-            #sec_ax = calibration_curves_axis[l].secondary_yaxis('right')
-            #sec_ax.tick_params(axis='y', colors='black')
-            #sec_ax.set_ylabel('Fraction of Samples', color='black')
-            calibration_curves_axis[l].set_xlabel('Confidence')
-            calibration_curves_axis[l].plot([0,1], [0,1], 'k:')
-            calibration_curves_axis[l].set_title('Calibration curve at T=%i'%t, fontsize=13)
-            calibration_curves_axis[l].legend()
+    ax.set_ylabel('ECE', color='black')
+    ax.tick_params(axis='y', colors='black')
+    ax.set_ylim([0, 0.25])
+    ax.set_title("{pb} Prediction".format(pb=pb), fontsize=16, fontweight='bold')
+    ax.set_xticks(ticks=T)
+    ax.set_xlabel('T')
     ax.legend()
 
-fig.tight_layout(pad=2)
-fig.savefig('ensemble_calibration_plots.png')
+fig_ece.tight_layout(pad=2)
+fig_ece.savefig('ensemble_calibration_performance.png')
+
+# TODO: Calibration curves for DenseNet/tiny-DenseNet
+# fig_cal_curves, big_axes = plt.subplots(2*len(problems), 1, figsize=(2 * 5, len(problems) * 5),
+#                                         sharey=True, squeeze=False, gridspec_kw={})
+# for row, (big_ax, pb_name) in enumerate(zip(big_axes[:, 0], problems), start=1):
+#     big_ax.set_title('{pb} Prediction'.format(pb=pb_name), fontweight='bold', fontsize=16)
+#     big_ax.axis('off')
+#     big_ax._frameon = False
+#     big_ax.title.set_position([.5, 1.08])
+# for j, (pb, db, e) in enumerate(zip(problems, dbs, epochs)):
+#     for l, t in enumerate([T[0], T[-1]], start=1):
+#         calibration_curves_axis.append(fig.add_subplot(len(problems), 2, 2 * j + 1 + l))
+#     for i, (net, name, path) in enumerate(zip(nets, net_names, path_nets)):
+#         res = [get_pickle_obj(os.path.join(root, path, 'N_%i'%N, pb,'Ensembling',
+#                                           "EnsembleTest_{net}_{pb}_{db}_fold{fold}_epoch{e}.pkl".
+#                                            format(net=net,pb=pb,db=db,fold=k, e=e))) for k in range(5)]
+#         y_pred, y_true = np.array([res[f]['y'] for f in range(5)]), np.array([res[f]['y_true'] for f in range(5)])[:, :,0]
+#         y_pred = expit(y_pred)
+#         AUC = [[roc_auc_score(y_true[k], y_pred[k,:,:t].mean(axis=1)) for k in range(5)] for t in T]
+#         ECE = [[ECE_score(y_pred[k,:,:t].mean(axis=1), y_true[k]) for k in range(5)] for t in T]
+#         ax.errorbar(T, [np.mean(ece) for ece in ECE], yerr=[np.std(ece) for ece in ECE], capsize=3, ecolor=colors[i],
+#                     color=colors[i], label=name)
+#         # ax2 = ax.twinx()
+#         # ax2.errorbar(T, [np.mean(auc) for auc in AUC], yerr=[np.std(auc) for auc in AUC], capsize=3, ecolor='blue', color='blue')
+#         # ax2.set_ylabel('AUC', color='blue')
+#         # ax2.tick_params(axis='y', colors='blue')
+#         # ax2.set_ylim([0.5,0.95])
+#
+#         for l, t in enumerate([T[0], T[-1]], start=0):
+#             frac_pos_and_mean_pred_proba = [calibration_curve(y_true[fold], y_pred[fold,:,:t].mean(axis=1))
+#                                          for fold in range(5)]
+#             hist, bins = np.histogram(y_pred[0,:,:t].mean(axis=1), bins=5) # we assume they are all the same across the folds...
+#             calibration_curves_axis[l].bar(bins[:-1], hist/len(y_true[0]), np.diff(bins), ls='--',
+#                    fill=False, edgecolor=colors[i], align='edge')
+#             seaborn.lineplot(x=[mean_pred_prob for _ in range(5) for mean_pred_prob in
+#                                 np.mean([frac_mean_k[1] for frac_mean_k in frac_pos_and_mean_pred_proba], axis=0)],
+#                              y=[m for frac_mean_k in frac_pos_and_mean_pred_proba for m in frac_mean_k[0]],
+#                              marker='o', ax=calibration_curves_axis[l], color=colors[i], label=name)
+#             #ax.plot(mean_pred_proba, frac_pos, 's-', color='red')
+#             calibration_curves_axis[l].set_ylabel('Fraction of samples / Accuracy', color='black')
+#             calibration_curves_axis[l].tick_params(axis='y', colors='black')
+#             #sec_ax = calibration_curves_axis[l].secondary_yaxis('right')
+#             #sec_ax.tick_params(axis='y', colors='black')
+#             #sec_ax.set_ylabel('Fraction of Samples', color='black')
+#             calibration_curves_axis[l].set_xlabel('Confidence')
+#             calibration_curves_axis[l].plot([0,1], [0,1], 'k:')
+#             calibration_curves_axis[l].set_title('Calibration curve at T=%i'%t, fontsize=13)
+#             calibration_curves_axis[l].legend()
+#     ax.legend()
+#
+# fig.tight_layout(pad=2)
+# fig.savefig('ensemble_calibration_plots.png')
 
 # Predictive uncertainty quality improvement with Deep Ensemble for both low and high capacity models
 entropy_func = lambda sigma: - ((1-sigma) * np.log(1-sigma+1e-8) + sigma * np.log(sigma+1e-8))
@@ -841,7 +865,7 @@ nb_epochs = [299, 99, 299]
 metrics = ['mae', 'auc', 'auc']
 comparison_metrics = [operator.le, operator.ge, operator.ge]
 nb_folds = 5
-y_limits = [(5,15), (0.5, 0.9), (0.5, 0.9)]
+y_limits = [(4,13), (0.5, 0.9), (0.5, 0.9)]
 databases = ['HCP_IXI', 'SCZ_VIP', 'HCP_IXI']
 preprocs = ['quasi_raw']
 root = '/neurospin/psy_sbox/bd261576/checkpoints/regression_age_sex/Benchmark_IXI_HCP'
@@ -869,8 +893,8 @@ for i, (pb, epochs, metric, db, comp, ylim) in enumerate(zip(problems, nb_epochs
         else:
             get_metrics = get_regression_metrics
 
-        path_net = "SFCN" if pb == "Age" and preproc == "quasi_raw" else "DenseNet"
-        net = "SFCN" if pb == "Age" and preproc == "quasi_raw" else "DenseNet"
+        path_net = "ResNet/ResNet34" if pb == "Age" and preproc == "quasi_raw" else "DenseNet"
+        net = "ResNet34" if pb == "Age" and preproc == "quasi_raw" else "DenseNet"
         baseline = get_metrics(os.path.join(root, preproc, path_net, 'N_500', pb, file%(net, pb, db, '')),
                                                      epochs_tested=nb_folds * [299], folds_tested=range(nb_folds), display=False)
         param = '_step_size_scheduler_10' if pb =="Age" and preproc == '' else ""
@@ -915,11 +939,11 @@ for i, (pb, epochs, metric, db, comp, ylim) in enumerate(zip(problems, nb_epochs
         else:
             axes[i, 0].set_xticks([], [])
         axes[i,0].set_title('{pb} Prediction'.format(pb=pb.upper()), fontweight='bold')
-        axes[i,0].set_ylabel(metric.upper() if pb!= "Age" else "Correlation $r$")
+        axes[i,0].set_ylabel(metric.upper())
         axes[i,0].set_ylim(ylim)
         axes[i,0].legend(loc='lower left')
 
-fig.savefig('data_augmentation_performance_quasi-raw.png')
+fig.savefig('/home/benoit/Documents/Benchmark_IXI_HCP/Presentation/data_augmentation_performance_quasi-raw.png')
 
 
 

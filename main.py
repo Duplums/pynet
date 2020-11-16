@@ -60,6 +60,8 @@ if __name__=="__main__":
     parser.add_argument("--nb_epochs", type=int)
     parser.add_argument("--load_optimizer", action="store_true", help="If <pretrained_path> is set, loads also the "
                                                                       "optimizer's weigth")
+    parser.add_argument("--start_from", type=int, help="Iteration where to restart the counting from during training "
+                                                       "(useful when re-starting a training)")
     parser.add_argument("--with_logit", action="store_true")
     parser.add_argument("--predict", action="store_true")
     parser.add_argument("--profile_gpu", action="store_true", help="Profile the GPU time taken by a model during the training")

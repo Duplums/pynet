@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import torch.utils.checkpoint as cp
 from collections import OrderedDict
 from pynet.models.layers.dropout import SpatialConcreteDropout
-from torchvision.models.utils import load_state_dict_from_url
+#from torchvision.models.utils import load_state_dict_from_url
 
 
 __all__ = ['DenseNet', '_densenet', 'densenet121', 'densenet169', 'densenet201', 'densenet161']
