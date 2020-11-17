@@ -94,9 +94,19 @@ elif re.search("is[0-9]{6}", socket.gethostname()) is not None or socket.gethost
         os.path.join(root, 'cat12vbm/{phenotype}'.format(phenotype=d[1])) for d in ALL_DATASETS
     ]
 
-else:
+else: ## Jean-Zay Cluster
+    root = '/gpfsscratch/rech/lac/uoz16vf/data/'
     ## Dataset used for benchmark
-    CONFIG['cat12']['input_path'] = '/gpfsscratch/rech/lac/uoz16vf/data/all_t1mri_mwp1_gs-raw_data32_tocheck.npy'
-    CONFIG['cat12']['metadata_path'] = '/gpfsscratch/rech/lac/uoz16vf/data/all_t1mri_mwp1_participants.tsv'
-    CONFIG['quasi_raw']['input_path'] = '/gpfsscratch/rech/lac/uoz16vf/data/all_t1mri_quasi_raw_data32_1.5mm_skimage.npy'
-    CONFIG['quasi_raw']['metadata_path'] = '/gpfsscratch/rech/lac/uoz16vf/data/all_t1mri_quasi_raw_participants.tsv'
+    #CONFIG['cat12']['input_path'] = os.path.join(root, 'all_t1mri_mwp1_gs-raw_data32_tocheck.npy')
+    #CONFIG['cat12']['metadata_path'] = os.path.join(root, 'all_t1mri_mwp1_participants.tsv')
+    CONFIG['quasi_raw']['input_path'] = os.path.join(root, 'all_t1mri_quasi_raw_data32_1.5mm_skimage.npy')
+    CONFIG['quasi_raw']['metadata_path'] = os.path.join(root,'all_t1mri_quasi_raw_participants.tsv')
+
+    ## All datasets
+    CONFIG['cat12']['input_path'] = [
+        os.path.join(root, d[0]) for d in ALL_DATASETS
+    ]
+    CONFIG['cat12']['metadata_path'] = [
+        os.path.join(root, d[1]) for d in ALL_DATASETS
+    ]
+
