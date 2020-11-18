@@ -445,12 +445,12 @@ for j, (pb, db, e) in enumerate(zip(problems, dbs, epochs)):
         ECE = [[ECE_score(y_pred[k,:,:t].mean(axis=1), y_true[k]) for k in range(5)] for t in T]
         ax.errorbar(T, [np.mean(ece) for ece in ECE], yerr=[np.std(ece) for ece in ECE], capsize=3, ecolor=colors[i],
                     color=colors[i], label=name)
-    ax.set_ylabel('ECE', color='black')
+    ax.set_ylabel('ECE $\downarrow$', color='black')
     ax.tick_params(axis='y', colors='black')
     ax.set_ylim([0, 0.25])
     ax.set_title("{pb} Prediction".format(pb=pb), fontsize=16, fontweight='bold')
     ax.set_xticks(ticks=T)
-    ax.set_xlabel('T')
+    ax.set_xlabel('Number of models T')
     ax.legend()
 
 fig_ece.tight_layout(pad=2)
@@ -834,7 +834,7 @@ transformations = [
     add_swap(original_img, num_iterations=20)
 ]
 tf_names = ['Original image', 'Flip', 'Gaussian Blur', 'Gaussian Noise',
-            'Crop', 'Affine transformation', 'Ghosting Artefact', 'Motion Artefact', 'Spike Artefact',
+            'Crop+Resize', 'Affine transformation', 'Ghosting Artefact', 'Motion Artefact', 'Spike Artefact',
             'Biasfield Artefact', 'Random Swap']
 fig = plt.figure(constrained_layout=False, figsize=(20, 2/5*20))
 nb_cols = (len(transformations)+1)//2
@@ -858,20 +858,20 @@ import operator
 augmentations = ['Ghosting_Artefact',  'Spike_Artefact',  'Biasfield_Artefact', 'Motion_Artefact', 'Swap',
                  'Affine', 'Crop', 'Gaussian_Blur', 'Gaussian_Noise', 'Flip']
 augmentation_names = ['Ghosting Artefact', 'Spike Artefact',  'Biasfield\nArtefact',  'Motion\nArtefact', 'Swap',
-                      'Affine\nTransformation', 'Crop', 'Gaussian Blur', 'Gaussian Noise', 'Flip']
+                      'Affine\nTransformation', 'Crop+Resize', 'Gaussian Blur', 'Gaussian Noise', 'Flip']
 
 problems = ["Age", "Dx", "Sex"]
 nb_epochs = [299, 99, 299]
 metrics = ['mae', 'auc', 'auc']
 comparison_metrics = [operator.le, operator.ge, operator.ge]
 nb_folds = 5
-y_limits = [(4,13), (0.5, 0.9), (0.5, 0.9)]
+y_limits = [(4,10), (0.7, 0.9), (0.8, 1)]
 databases = ['HCP_IXI', 'SCZ_VIP', 'HCP_IXI']
-preprocs = ['quasi_raw']
+preprocs = ['']
 root = '/neurospin/psy_sbox/bd261576/checkpoints/regression_age_sex/Benchmark_IXI_HCP'
 file = 'Test_%s_%s_%s_%sfold{fold}_epoch{epoch}.pkl'
-hyperparams = {}#'Crop': 'crop_115-138-115_',
-               #'Affine': 'rot-5_trans-10_',
+hyperparams = {}#'Crop': 'crop_115-138-115_'}#,
+               #'Affine': 'rot-5_trans-10_'}#,
                #'Biasfield_Artefact': 'coeff_0.1_'}
 
 def label_bar_plt(ax, rects, labels, **kwargs):
@@ -943,7 +943,7 @@ for i, (pb, epochs, metric, db, comp, ylim) in enumerate(zip(problems, nb_epochs
         axes[i,0].set_ylim(ylim)
         axes[i,0].legend(loc='lower left')
 
-fig.savefig('/home/benoit/Documents/Benchmark_IXI_HCP/Presentation/data_augmentation_performance_quasi-raw.png')
+fig.savefig('/home/benoit/Documents/Benchmark_IXI_HCP/Presentation/data_augmentation_performance_cat12.png')
 
 
 

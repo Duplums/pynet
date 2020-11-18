@@ -19,6 +19,7 @@ from copy import deepcopy
 # Third party import
 import torch
 import torch.nn.functional as func
+from torch.nn import DataParallel
 from tqdm import tqdm
 import numpy as np
 
@@ -35,7 +36,8 @@ class Base(Observable):
     """
     def __init__(self, optimizer_name="Adam", learning_rate=1e-3,
                  loss_name="NLLLoss", metrics=None, use_cuda=False,
-                 pretrained=None, freeze_until_layer=None, load_optimizer=True, **kwargs):
+                 pretrained=None, freeze_until_layer=None, load_optimizer=True, use_multi_gpu=True,
+                 **kwargs):
         """ Class instantiation.
 
         Observers will be notified, allowed signals are:
@@ -60,6 +62,8 @@ class Base(Observable):
             path to the pretrained model or weights.
         load_optimizer: boolean, default True
             if pretrained is set, whether to also load the optimizer's weights or not
+        use_multi_gpu: boolean, default True
+            if several GPUs are available, use them during forward/backward pass
         kwargs: dict
             specify directly a custom 'model', 'optimizer' or 'loss'. Can also
             be used to set specific optimizer parameters.
@@ -132,6 +136,9 @@ class Base(Observable):
                     self.model.load_state_dict(checkpoint)
         if freeze_until_layer is not None:
             freeze_until(self.model, freeze_until_layer)
+
+        if use_multi_gpu and torch.cuda.device_count() > 1:
+            self.model = DataParallel(self.model)
 
         self.model = self.model.to(self.device)
 

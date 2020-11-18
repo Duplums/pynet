@@ -75,6 +75,12 @@ if socket.gethostname() == 'kraken':
     CONFIG['cat12']['metadata_path'] = [
         os.path.join(root, 'all_datasets/{phenotype}'.format(phenotype=d[1])) for d in ALL_DATASETS
     ]
+    CONFIG['cat12']['input_path_copy'] = [
+        os.path.join(root, 'all_datasets_copy/{dataset}'.format(dataset=d[0])) for d in ALL_DATASETS
+    ]
+    CONFIG['cat12']['metadata_path_copy'] = [
+        os.path.join(root, 'all_datasets_copy/{phenotype}'.format(phenotype=d[1])) for d in ALL_DATASETS
+    ]
 
 
 elif re.search("is[0-9]{6}", socket.gethostname()) is not None or socket.gethostname()=='triscotte' or \

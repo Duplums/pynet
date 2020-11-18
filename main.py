@@ -39,6 +39,8 @@ if __name__=="__main__":
     parser.add_argument("--pin_mem", type=bool, default=True)
     parser.add_argument("--drop_last", action="store_true")
     parser.add_argument("--db", choices=list(CONFIG['db'].keys()), required=True)
+    parser.add_argument("--switch_to_copy", action='store_true', help='If set, switch to the copy of the initial data '
+                                                                      '(prevents from concurrent access)')
     parser.add_argument("--sampler", choices=["random", "weighted_random"], required=True)
     parser.add_argument("--model", choices=['base', 'SimCLR'], default='base')
     parser.add_argument("--labels", nargs='+', type=str, help="Label(s) to be predicted")
@@ -75,7 +77,11 @@ if __name__=="__main__":
     args = parser.parse_args()
 
     if args.input_path is None or args.metadata_path is None:
-        args.input_path, args.metadata_path = CONFIG[args.preproc]['input_path'], CONFIG[args.preproc]['metadata_path']
+        if args.switch_to_copy:
+            args.input_path, args.metadata_path = CONFIG[args.preproc]['input_path_copy'], \
+                                                  CONFIG[args.preproc]['metadata_path_copy']
+        else:
+            args.input_path, args.metadata_path = CONFIG[args.preproc]['input_path'], CONFIG[args.preproc]['metadata_path']
     if args.weight_decay is not None:
         CONFIG['optimizer']['Adam']['weight_decay'] = args.weight_decay
 

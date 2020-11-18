@@ -76,9 +76,11 @@ for (scaler, preproc) in zip(scalers, preprocs):
     for i_pb, (pb, label_map, label, strat_label_map, strat_label, db, db_config, hyperparams) in \
         enumerate(zip(pbs, label_mappings, labels, strat_label_mappings,
                       strat_labels, dbs, dbs_config, models_hyperparams)):
-        if pb != "Dx":
+        if pb != "Sex":
             continue
         for (N, nb_folds) in zip(nb_training_samples[i_pb], total_nb_folds[i_pb]):
+            if N < 1000:
+                continue
             manager = DataManager(None, metadata_path,
                                   number_of_folds=nb_folds,
                                   labels=[label],
