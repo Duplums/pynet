@@ -2,7 +2,8 @@ import argparse
 from json_config import CONFIG
 from pynet.metrics import METRICS
 from training import BaseTrainer
-from testing import BaseTester, AlphaWGANTester, RobustnessTester, BayesianTester, EnsemblingTester
+from testing import BaseTester, AlphaWGANTester, RobustnessTester, BayesianTester, EnsemblingTester, \
+    NNRepresentationTester
 import torch
 import logging
 
@@ -45,7 +46,9 @@ if __name__=="__main__":
     parser.add_argument("--model", choices=['base', 'SimCLR'], default='base')
     parser.add_argument("--labels", nargs='+', type=str, help="Label(s) to be predicted")
     parser.add_argument("--loss", type=str, choices=['BCE', 'l1', 'BCE_concrete_dropout', 'NTXenLoss', 'multi_l1_bce',
-                                                     'l1_sup_NTXenLoss', 'BCE_SBRLoss'], required=True)
+                                                     'l1_sup_NTXenLoss', 'BCE_SBRLoss', 'SupervisedGaussianNTXenLoss'],
+                        required=True)
+    parser.add_argument("--loss_param", type=float, help="The hyper-parameter given to the loss. Must be a float.")
     parser.add_argument("--folds", nargs='+', type=int, help="Fold indexes to run during the training")
     parser.add_argument("--stratify_label", type=str, help="Label used for the stratification of the train/val split")
     parser.add_argument("--with_visualization", action="store_true")
@@ -71,7 +74,7 @@ if __name__=="__main__":
 
     # Kind of tests
     parser.add_argument("--train", action="store_true")
-    parser.add_argument("--test", choices=['basic', 'robustness', 'ssim', 'MC', 'ensemble'],
+    parser.add_argument("--test", choices=['basic', 'robustness', 'ssim', 'MC', 'ensemble', 'nn_repr'],
                         help="What kind of test it will perform.")
 
     args = parser.parse_args()
@@ -126,6 +129,9 @@ if __name__=="__main__":
         tester = RobustnessTester(args)
         tester.run()
 
+    if args.test =='nn_repr':
+        tester = NNRepresentationTester(args)
+        tester.run()
 
 
 

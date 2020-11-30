@@ -36,7 +36,7 @@ class Transformer(object):
     """ Class that can be used to register a sequence of transformations.
     """
     Transform = namedtuple("Transform", ["transform", "params", "probability",
-                                         "apply_to"])
+                                         "apply_to", "with_channel"])
 
     def __init__(self, with_channel=True, output_label=False):
         """ Initialize the class.
@@ -57,7 +57,7 @@ class Transformer(object):
         self.output_label = output_label
 
 
-    def register(self, transform, probability=1, apply_to=None, **kwargs):
+    def register(self, transform, probability=1, apply_to=None, with_channel=False, **kwargs):
         """ Register a new transformation.
 
         Parameters
@@ -76,7 +76,7 @@ class Transformer(object):
             apply_to = ["all"]
         trf = self.Transform(
             transform=transform, params=kwargs, probability=probability,
-            apply_to=apply_to)
+            apply_to=apply_to, with_channel=with_channel)
         self.transforms.append(trf)
 
     def __call__(self, arr):
@@ -104,9 +104,12 @@ class Transformer(object):
                 kwargs["order"] = 0
             if np.random.rand() < trf.probability:
                 logger.debug("Applying {0}...".format(trf.transform))
-                for channel_id in range(transformed.shape[0]):
-                    transformed[channel_id] = trf.transform(
-                        transformed[channel_id], **kwargs)
+                if trf.with_channel:
+                    transformed = trf.transform(transformed, **kwargs)
+                else:
+                    for channel_id in range(transformed.shape[0]):
+                        transformed[channel_id] = trf.transform(
+                            transformed[channel_id], **kwargs)
                 logger.debug("Done.")
         if not self.with_channel:
             transformed = transformed[0]

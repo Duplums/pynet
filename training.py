@@ -67,10 +67,12 @@ class BaseTrainer():
             loss = ConcreteDropoutLoss(net, nn.BCEWithLogitsLoss(), weight_regularizer=1e-6, dropout_regularizer=1e-5)
         elif name == "NTXenLoss":
             loss = NTXenLoss(temperature=0.1, return_logits=True)
+        elif name == "SupervisedGaussianNTXenLoss": ## Default value for sigma == 5
+            loss = SupervisedGaussianNTXenLoss(temperature=0.1, sigma=args.loss_param or 5, return_logits=True)
         elif name == "multi_l1_bce": # mainly for (age, sex) prediction
             loss = MultiTaskLoss([nn.L1Loss(), nn.BCEWithLogitsLoss()], weights=[1, 1])
         elif name == "l1_sup_NTXenLoss": # Mainly for supervised SimCLR
-            loss = SupervisedNTXenLoss(supervised_loss=nn.L1Loss(), alpha=1, temperature=0.1, return_logits=True)
+            loss = SupervisedNTXenLoss(supervised_loss=nn.L1Loss(), alpha=0.1, temperature=0.1, return_logits=True)
         elif name == "BCE_SBRLoss": # BCE + a regularization term based on Sample-Based reg loss
             loss = SBRLoss(net, nn.BCEWithLogitsLoss(), "features", num_classes=args.num_classes,
                            device=('cuda' if args.cuda else 'cpu'))

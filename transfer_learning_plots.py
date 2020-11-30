@@ -1,6 +1,6 @@
 import os
 import numpy as np
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.metrics import roc_auc_score, balanced_accuracy_score
 from pynet.utils import get_pickle_obj
 from pynet.plotting.image import plot_data_reduced
@@ -16,14 +16,20 @@ seaborn.set_style("darkgrid")
 ## Analysis of the generalization power of DenseNet pretrained on different pb (supervised and unsupervised) for dx classification
 
 
-def train_linear_model(data_train, data_test, **kwargs):
+def train_linear_model(data_train, data_test, reg=False, **kwargs):
     # Train the model with a logistic regression
     X, y = np.array(data_train['y']).reshape(len(data_train['y']), -1), np.array(data_train['y_true']).ravel()
-    model = LogisticRegression(solver='liblinear', **kwargs).fit(X, y)
+    if reg:
+        model = Ridge(**kwargs).fit(X, y)
+    else:
+        model = LogisticRegression(solver='liblinear', **kwargs).fit(X, y)
     # Test the model
     X_test, y_test = np.array(data_test['y']).reshape(len(data_test['y']), -1), \
                      np.array(data_test['y_true']).ravel()
-    y_pred = model.predict_proba(X_test)[:, 1]
+    if reg:
+        y_pred = model.predict(X_test)
+    else:
+        y_pred = model.predict_proba(X_test)[:, 1]
     return y_test, y_pred
 
 
@@ -36,7 +42,16 @@ fig, axes = plt.subplots(1, 3, sharey=True, figsize=(15,5))
 
 ### Compute the baseline: only logistic regression on the input images
 
-# data, meta = np.load(CONFIG['input_path'], mmap_mode='r'), pd.read_csv(CONFIG['metadata_path'], sep='\t')
+# data, meta = np.load(CONFIG['cat12']['input_path'], mmap_mode='r'), \
+#              pd.read_csv(CONFIG['cat12']['metadata_path'], sep='\t')
+
+## Age prediction
+# mask_train = DataManager.get_mask(meta, CONFIG['db']['healthy']['train'])
+# mask_test = DataManager.get_mask(meta, CONFIG['db']['healthy']['test'])
+# model = Ridge().fit(data[mask_train].reshape(mask_train.sum(),-1),meta[mask_train].age)
+# pred = model.predict(data[mask_test].reshape(mask_test.sum(),-1))
+# true = data[mask_test].reshape(mask_test)
+## DX prediction
 # mask_train = DataManager.get_mask(meta, CONFIG['db']['tiny_scz_kfolds']['train'])
 # mask_test = DataManager.get_mask(meta, CONFIG['db']['tiny_scz_kfolds']['test'])
 # model = LogisticRegression(solver='liblinear').fit(data[mask_train].reshape(mask_train.sum(),-1),
@@ -185,30 +200,96 @@ plt.show()
 
 ## SimCLR Pretraining
 root = '/neurospin/psy_sbox/bd261576/checkpoints/self_supervision/simCLR/DenseNet/N_1600'
-epochs = [[99], [99], [10], [299, 199, 99, 80]] # Exp 0, 1, 2, 3
-val_epochs = [[99], [50], [10], [299, 199, 99, 80]]
+
 exp_3 = ['unsupervised/noisy_spike_motion_crop_DA/', 'age_supervision/noisy_spike_motion_crop_DA',
-         'age_supervision/noisy_spike_motion_DA/', 'unsupervised/noisy_spike_motion_cutout_DA']
-for i, (list_e,list_v_e) in enumerate(zip(epochs, val_epochs)):
-    if i != 3:
-        continue
-    for k, (e, v_e) in enumerate(zip(list_e, list_v_e)):
+         'age_supervision/noisy_spike_motion_DA/', 'unsupervised/noisy_spike_motion_cutout_DA',
+         'unsupervised/crop_DA', 'unsupervised/cutout_DA', 'unsupervised/affine_DA', 'unsupervised/crop_cutout_DA',
+         'age_implicit_supervision/cutout_DA', 'age_implicit_supervision/crop_DA/sigma_5',
+         'age_supervision/cutout_DA', 'age_supervision/crop_DA', 'age_implicit_supervision/crop_DA/sigma_0.5',
+         'age_implicit_supervision/crop_DA/sigma_1', 'age_implicit_supervision/crop_DA/sigma_2',
+         'age_implicit_supervision/crop_DA/sigma_3']
+sub_exp_3 = [[], [], [], [], ['window-0.25', 'window-0.5', 'window-0.75', 'window-0.5_unresized'],
+             ['window-0.25', 'window-0.5', 'window-0.75'], [], [], ['window-0.5'], ['window-0.75', 'window-0.5'],
+             ['window-0.5'], ['window-0.5'], ['window-0.75'], ['window-0.75'], ['window-0.75'], ['window-0.75']]
+epochs = [[99], [50], [10], [299, 199, 99, 80, [200, 200, 30, 299], [10, 299, 99], # Exp 0, 1, 2, 3
+                             250, 299, 160, [160, 160], 299, 299, 90, 90, 90, 90]
+          ]
+for i, list_e in enumerate(epochs):
+    for k, e in enumerate(list_e):
+        if i!= 3 or k < 12:
+            continue
         path_spec = 'exp_%i' if i < 3 else 'exp_%i/'+exp_3[k]
-        baseline = History.load(os.path.join(root, path_spec%i, 'Validation_DenseNet_HCP_IXI_0_epoch_%i.pkl'%v_e))
-        data_train = get_pickle_obj(os.path.join(root, path_spec%i, 'block_outputs/DenseNet_Block4_SCZ_VIP_fold0_epoch%i.pkl'%e))
-        data_test = get_pickle_obj(os.path.join(root, path_spec%i, 'block_outputs/DenseNet_Block4_BSNIP_fold0_epoch%i.pkl'%e))
-        y_test, y_pred = train_linear_model(data_train, data_test)
-        if 'MAE on validation set' in baseline.metrics:
-            print('Exp {i}:\n\tPretext task MAE={mae}, Acc={acc}\n\tAUC={auc}\n\tBAcc={bacc}'.
-                  format(i=i, mae=baseline['MAE on validation set'][1][-1],
-                         acc=baseline['accuracy on validation set'][1][-1],
-                         auc=roc_auc_score(y_test, y_pred),
-                         bacc=balanced_accuracy_score(y_test, y_pred>0.5)))
-        else:
-            print('Exp {i}:\n\tPretext task Acc={acc}\n\tAUC={auc}\n\tBAcc={bacc}'.
-                  format(i=i, acc=baseline['accuracy on validation set'][1][-1],
-                         auc=roc_auc_score(y_test, y_pred),
-                         bacc=balanced_accuracy_score(y_test, y_pred>0.5)))
+        if type(e) == int:
+            e = [e]
+        for j, sub_e in enumerate(e):
+            baseline = History.load(
+                os.path.join(root, path_spec%i, 'Validation_DenseNet_HCP_IXI_{sub_exp}0_epoch_{e}.pkl'.
+                             format(sub_exp=sub_exp_3[k][j]+'_' if i==3 and len(sub_exp_3[k])>0 else '', e=sub_e)))
+            if 'MAE on validation set' in baseline.metrics:
+                print('Exp {i} ({exp}: {sub_exp}):\n\tPretext task MAE={mae}, Acc={acc}'.
+                      format(i=i, exp=exp_3[k] if i==3 else 'None',
+                             sub_exp=sub_exp_3[k][j] + '_' if i == 3 and len(sub_exp_3[k]) > 0 else '',
+                             mae=baseline['MAE on validation set'][1][-1],
+                             acc=baseline['accuracy on validation set'][1][-1]))
+            else:
+                print('Exp {i} ({exp}: {sub_exp}):\n\tPretext task Acc={acc}'.
+                      format(i=i,  exp=exp_3[k] if i==3 else 'None',
+                             sub_exp=sub_exp_3[k][j]+'_' if i==3 and len(sub_exp_3[k])>0 else '',
+                             acc=baseline['accuracy on validation set'][1][-1]))
+            dbs_training = ['SCZ_VIP'] + (['HCP_IXI'] if i<3 or 'unsupervised' in exp_3[k] else [])
+            dbs_test = ['BSNIP'] + (['BSNIP_CTL'] if i<3 or 'unsupervised' in exp_3[k] else [])
+            is_reg = [False] + ([True] if i<3 or 'unsupervised' in exp_3[k] else [])
+            for l, (db_training, db_test) in enumerate(zip(dbs_training, dbs_test)):
+                data_train = get_pickle_obj(
+                    os.path.join(root, path_spec%i, 'block_outputs/DenseNet_Block4_{db_train}_{sub_exp}fold0_epoch{e}.pkl'.
+                                 format(db_train=db_training,
+                                        sub_exp=sub_exp_3[k][j]+'_' if i==3 and len(sub_exp_3[k])>0 else '', e=sub_e)))
+                data_test = get_pickle_obj(
+                    os.path.join(root, path_spec%i, 'block_outputs/DenseNet_Block4_{db_test}_{sub_exp}fold0_epoch{e}.pkl'.
+                                 format(db_test=db_test,
+                                        sub_exp=sub_exp_3[k][j]+'_' if i==3 and len(sub_exp_3[k])>0 else '', e=sub_e)))
+                y_test, y_pred = train_linear_model(data_train, data_test, reg=is_reg[l])
+                if is_reg[l]:
+                    print("\t(Age) MAE={mae}".format(mae=np.mean(np.abs(y_test-y_pred))))
+                else:
+                    print("\t(Dx) AUC={auc}\n\tBacc={bacc}".format(auc=roc_auc_score(y_test, y_pred),
+                                                              bacc=balanced_accuracy_score(y_test, y_pred>0.5)))
+
+## Plots the results of several DA with implicit age supervision and varying sigma on HC vs SCZ downstream task
+root_ = os.path.join(root, 'exp_3/age_implicit_supervision/')
+augmentations = ['cutout_DA', 'crop_DA', 'noisy_spike_motion_crop_DA']
+augmentation_names = ['Cutout patch 25% p=100%', 'Crop 75% p=100%',
+                      'Flip-Blur-Noise-Motion-Spike-Ghosting-Crop [75%] p=50%']
+hyperparams = ['window-0.25_', 'window-0.75_', '']
+sigmas = [0, 0.5, 1, 2, 3, 5]
+epochs = [[100, 100, 100, 100, 140], [30, 90, 90, 90, 90, 160], [240, 240, 240, 240, 240, 240]]
+baseline = {'b_acc': 0.72, 'auc': 0.78}
+results = {s: dict() for s in sigmas}
+fig = plt.figure(figsize=(8, 8))
+for i, (aug, aug_name, hyper) in enumerate(zip(augmentations, augmentation_names, hyperparams)):
+    for sigma, e in zip(sigmas, epochs[i]):
+        h_val = History.load(os.path.join(root_, aug, 'sigma_'+ str(sigma),
+                                          "Validation_DenseNet_HCP_IXI_%s0_epoch_%s.pkl"%(hyper, e)))
+        train = get_pickle_obj(os.path.join(root_, aug, 'sigma_'+ str(sigma),
+                                            'block_outputs/DenseNet_Block4_SCZ_VIP_%sfold0_epoch%s.pkl'%(hyper, e)))
+        test = get_pickle_obj(os.path.join(root_, aug, 'sigma_'+ str(sigma),
+                                           'block_outputs/DenseNet_Block4_BSNIP_%sfold0_epoch%s.pkl'%(hyper,e)))
+        y_test, y_pred = train_linear_model(train, test, reg=False)
+        results[sigma][aug] = {'acc_pretext': h_val['accuracy on validation set'][1][-1],
+                               'auc': roc_auc_score(y_test, y_pred),
+                               'b_acc': balanced_accuracy_score(y_test, y_pred>0.5)}
+
+    plt.scatter([results[s][aug]['acc_pretext'] for s in sigmas], [results[s][aug]['auc'] for s in sigmas], marker='+',
+                 label=aug_name)
+    for i, s in enumerate(sigmas):
+        plt.annotate("$\sigma=%.1f$"%s, (0.001+results[s][aug]['acc_pretext'], 0.001+results[s][aug]['auc']))
+
+plt.axhline(baseline['auc'], color='gray', linestyle='dotted', label="Supervised on SCZ vs HC")
+plt.xlabel('Accuracy on pretext task', fontsize=14)
+plt.ylabel('AUC on SCZ vs HC', fontsize=14)
+plt.title('Unsupervised SimCLR With Age Prior $\sigma$', fontweight='bold', fontsize=16)
+plt.legend()
+fig.savefig('simclr_perf_implicit_age_sup.png')
 
 ## Age + Sex/Age Pretraining
 root = '/neurospin/psy_sbox/bd261576/checkpoints/regression_age_sex/Benchmark_IXI_HCP/DenseNet/'

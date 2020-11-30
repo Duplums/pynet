@@ -92,7 +92,7 @@ elif re.search("is[0-9]{6}", socket.gethostname()) is not None or socket.gethost
     CONFIG['quasi_raw']['input_path'] = os.path.join(root, 'quasi_raw/all_t1mri_quasi_raw_data32_1.5mm_skimage.npy')
     CONFIG['quasi_raw']['metadata_path'] = os.path.join(root, 'quasi_raw/all_t1mri_quasi_raw_participants.tsv')
 
-    ## All datasets
+    # All datasets
     CONFIG['cat12']['input_path'] = [
         os.path.join(root, 'cat12vbm/{dataset}'.format(dataset=d[0])) for d in ALL_DATASETS
     ]

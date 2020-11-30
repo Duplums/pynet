@@ -1,5 +1,5 @@
 import os
-import torch
+import re, torch
 import pickle
 import logging
 from pynet.utils import get_chk_name
@@ -7,6 +7,7 @@ from pynet.core import Base
 from pynet.history import History
 from training import BaseTrainer
 from pynet.transforms import *
+from json_config import CONFIG
 
 class BaseTester():
 
@@ -45,7 +46,7 @@ class BaseTester():
         if self.args.folds is not None and len(self.args.folds) > 0:
             folds = self.args.folds
         else:
-            folds = list(range(self.manager.number_of_folds))
+            folds = list(range(self.args.nb_folds))
         return folds
 
     def get_epochs_to_test(self):
@@ -53,16 +54,16 @@ class BaseTester():
             # Get all saved points and test them
             epochs_tested = [list(range(self.args.nb_epochs_per_saving, self.args.nb_epochs,
                                         self.args.nb_epochs_per_saving)) + [
-                                 self.args.nb_epochs - 1] for _ in range(self.manager.number_of_folds)]
+                                 self.args.nb_epochs - 1] for _ in range(self.args.nb_folds)]
         elif self.args.test_best_epoch:
             # Get the best point of each fold according to a certain metric (early stopping)
             metric = self.args.test_best_epoch
             h_val = History.load_from_dir(self.args.checkpoint_dir, "Validation_%s" % (self.args.exp_name or ""),
-                                          self.manager.number_of_folds - 1, self.args.nb_epochs - 1)
+                                          self.args.nb_folds - 1, self.args.nb_epochs - 1)
             epochs_tested = h_val.get_best_epochs(metric, highest=True).reshape(-1, 1)
         else:
             # Get the last point and test it, for each fold
-            epochs_tested = [[self.args.nb_epochs - 1] for _ in range(self.manager.number_of_folds)]
+            epochs_tested = [[self.args.nb_epochs - 1] for _ in range(self.args.nb_folds)]
 
         return epochs_tested
 
@@ -84,6 +85,65 @@ class AlphaWGANTester(BaseTester):
         ms_ssim_rand = self.net.compute_MS_SSIM(N=400, batch_size=self.args.batch_size, save_img=True,
                                            saving_dir=self.args.checkpoint_dir)
         print("MS-SSIM on 400 random samples: %f" % ms_ssim_rand, flush=True)
+
+
+class NNRepresentationTester(BaseTester):
+    """
+    Test the representation of a given network by passing the training set and testing set through all the
+    network's blocks and dumping the new vectors on disk (with eventually the labels to predict)
+    CONVENTION:
+        - we assume <network_name>_block%i exists for i=1..4
+        - if args.outfile_name is given, we assume it has the following form: <name1>%i<name2>[s1][s2]<name3>
+          where name1, name2, name3 can be anything, %s is the block number, s1 is the string used when encoding the
+          training set and s2 is the one used for the testing set.
+    """
+    def __init__(self, args):
+        self.args = args
+        ## Several networks to test corresponding to a partial version of the whole network
+        self.nets = [BaseTrainer.build_network(args.net+'_block%i'%i, args.num_classes, args, in_channels=1)
+                     for i in range(1, 5)]
+        ## Useless, just to avoid weird issues
+        self.loss = BaseTrainer.build_loss(args.loss, net=self.nets[0], args=self.args)
+        ## Usual logger and warning
+        self.logger = logging.getLogger("pynet")
+        if self.args.pretrained_path and self.args.nb_folds > 1:
+            self.logger.warning('Several folds found while a unique pretrained path is set!')
+
+    def run(self):
+        # It should define the training set and the testing set
+        stratif = CONFIG['db'][self.args.db]
+        assert "train" in stratif and "test" in stratif, \
+            "Training set and/or testing set definition missing for %s"%self.args.db
+        epochs_tested = self.get_epochs_to_test()
+        folds_to_test = self.get_folds_to_test()
+        # Passes all the testing set through the network and saves the weights.
+        for set in ["test", "train"]:
+            if set == "test":
+                manager = BaseTrainer.build_data_manager(self.args)
+            else:
+                CONFIG['db'][self.args.db]["train"], CONFIG['db'][self.args.db]["test"] = stratif['test'], stratif['train']
+                manager = BaseTrainer.build_data_manager(self.args)
+            for fold in folds_to_test:
+                for epoch in epochs_tested[fold]:
+                    pretrained_path = self.args.pretrained_path or \
+                                      os.path.join(self.args.checkpoint_dir, get_chk_name(self.args.exp_name, fold, epoch))
+                    for i, net in enumerate(self.nets, start=1):
+                        if self.args.outfile_name is None:
+                            outfile = "%s_%s_block%i_"%(self.args.db, set, i) + self.args.exp_name
+                        else:
+                            # Replace outfile_name by the current values
+                            outfile = self.args.outfile_name%i
+                            regex = '\[(.*)\]\[(.*)\]' # [train_set][test_set]
+                            train_set, test_set = re.search(regex, outfile)[1], re.search(regex, outfile)[2]
+                            outfile = re.sub(regex, train_set if set=="train" else test_set, outfile)
+
+                        exp_name = outfile + "_fold{}_epoch{}.pkl".format(fold, epoch)
+                        model = Base(model=net, loss=self.loss,
+                                     pretrained=pretrained_path,
+                                     use_cuda=self.args.cuda)
+                        y, y_true = model.MC_test(manager.get_dataloader(test=True).test, MC=1)
+                        with open(os.path.join(self.args.checkpoint_dir, exp_name), 'wb') as f:
+                            pickle.dump({"y": y, "y_true": y_true}, f)
 
 
 class BayesianTester(BaseTester):

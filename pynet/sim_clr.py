@@ -1,10 +1,11 @@
 from pynet.core import Base
 from pynet.datasets.core import ArrayDataset, DataItem
+import torch
 from pynet.augmentation import *
+from torchio.transforms import RandomAffine, RandomMotion
 from pynet.transforms import Crop
 import bisect
 from tqdm import tqdm
-import torch
 import numpy as np
 
 class SimCLRDataset(ArrayDataset):
@@ -20,12 +21,14 @@ class SimCLRDataset(ArrayDataset):
             # compose_transforms.register(flip, probability=0.5, axis=0)
             # compose_transforms.register(add_blur, probability=0.5, sigma=(0.1, 1))
             # compose_transforms.register(add_ghosting, intensity=1, probability=0.5, axis=0)
-            # compose_transforms.register(add_motion, probability=0.5)
+            # compose_transforms.register(RandomMotion(degrees=10, translation=10, num_transforms=2, p=1),
+            #                             with_channel=True, probability=0.5)
             # compose_transforms.register(add_noise, sigma=(0.1, 1), probability=0.5)
             # compose_transforms.register(add_spike, n_spikes=2, probability=0.5)
-            compose_transforms.register(cutout, probability=1, patch_size=96, inplace=True)
-            #compose_transforms.register(Crop((32, 32, 32), "random", resize=True), probability=1)
-            #compose_transforms.register(add_biasfield, probability=0.1, coefficients=0.5)
+            compose_transforms.register(cutout, probability=1, patch_size=32, inplace=False)
+            # compose_transforms.register(Crop((96, 96, 96), "random", resize=True), probability=0.5)
+            # compose_transforms.register(add_biasfield, probability=0.1, coefficients=0.5)
+            # compose_transforms = RandomAffine(scales=1.0, degrees=40, translation=40, p=1)
 
             self.self_supervision = compose_transforms
 
