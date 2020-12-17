@@ -16,7 +16,7 @@ from collections import namedtuple, OrderedDict
 import torch
 import logging
 import bisect
-from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler, RandomSampler, ConcatDataset
+from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler, RandomSampler, SequentialSampler
 import numpy as np
 from tqdm import tqdm
 import pandas as pd
@@ -91,9 +91,9 @@ class DataManager(object):
             the number of folds that will be used in the cross validation.
         batch_size: int, default 1
             the size of each mini-batch.
-        sampler: str in ["random", "weighted_random"], default None
-            Whether we use a weighted random sampler (to deal with imbalanced classes issue) or random sampler (without
-            replacement, to introduce shuffling in batches)
+        sampler: str in ["random", "weighted_random", "sequential"], default None
+            Whether we use a weighted random sampler (to deal with imbalanced classes issue), random sampler (without
+            replacement, to introduce shuffling in batches) or sequential (no shuffle)
         input_transforms, output_transforms: list of callable, default None
             transforms a list of samples with pre-defined transformations.
         data_augmentation: list of callable, default None
@@ -182,7 +182,7 @@ class DataManager(object):
         self.self_supervision = self_supervision
         self.add_input = add_input
         self.data_loader_kwargs = dataloader_kwargs
-        assert sampler in [None, "weighted_random", "random"], "Unknown sampler: %s" % str(sampler)
+        assert sampler in [None, "weighted_random", "random", "sequential"], "Unknown sampler: %s" % str(sampler)
         self.sampler = sampler
 
         dataset_cls = ArrayDataset if dataset is None else dataset
@@ -415,6 +415,8 @@ class DataManager(object):
                 sampler = WeightedRandomSampler(samples_weigths, len(indices), replacement=True)
             elif self.sampler == "random":
                 sampler = RandomSampler(self.dataset["train"][fold_index])
+            elif self.sampler == "sequential":
+                sampler = SequentialSampler(self.dataset["train"][fold_index])
             _train = DataLoader(
                 self.dataset["train"][fold_index], batch_size=self.batch_size, sampler=sampler,
                 collate_fn=self.collate_fn, **self.data_loader_kwargs)

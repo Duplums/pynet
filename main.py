@@ -42,11 +42,12 @@ if __name__=="__main__":
     parser.add_argument("--db", choices=list(CONFIG['db'].keys()), required=True)
     parser.add_argument("--switch_to_copy", action='store_true', help='If set, switch to the copy of the initial data '
                                                                       '(prevents from concurrent access)')
-    parser.add_argument("--sampler", choices=["random", "weighted_random"], required=True)
+    parser.add_argument("--sampler", choices=["random", "weighted_random", "sequential"], required=True)
     parser.add_argument("--model", choices=['base', 'SimCLR'], default='base')
     parser.add_argument("--labels", nargs='+', type=str, help="Label(s) to be predicted")
     parser.add_argument("--loss", type=str, choices=['BCE', 'l1', 'BCE_concrete_dropout', 'NTXenLoss', 'multi_l1_bce',
-                                                     'l1_sup_NTXenLoss', 'BCE_SBRLoss', 'SupervisedGaussianNTXenLoss'],
+                                                     'l1_sup_NTXenLoss', 'BCE_SBRLoss', 'GeneralizedSupervisedNTXenLoss',
+                                                     'AgeSexSupervisedNTXenLoss'],
                         required=True)
     parser.add_argument("--loss_param", type=float, help="The hyper-parameter given to the loss. Must be a float.")
     parser.add_argument("--folds", nargs='+', type=int, help="Fold indexes to run during the training")
@@ -58,6 +59,7 @@ if __name__=="__main__":
     parser.add_argument("--num_cpu_workers", type=int, default=0, help="Number of workers assigned to do the "
                                                                        "preprocessing step (used by DataLoader of Pytorch)")
     parser.add_argument("--test_all_epochs", action="store_true")
+    parser.add_argument("--test_param", type=float, help="The hyper-parameter given to the test function. Must be a float.")
     parser.add_argument("--test_best_epoch", type=str, choices=list(METRICS.keys()),
                         help="If set, it must be a metric or 'loss' in order to select the best epoch to test")
     parser.add_argument("--net", type=str, help="Initial learning rate")

@@ -127,19 +127,19 @@ scalers = [None, StandardScaler(copy=True)]
 # ## Data Loading for N=10K
 print("Data loading...", flush=True)
 data = [np.load(p, mmap_mode='r') for p in CONFIG['cat12']['input_path']]
-# ## AGE Prediction at N=10K (only with CAT12)
-#
-# manager = DataManager(None, CONFIG['cat12']['metadata_path'],
-#                       number_of_folds=3,
-#                       labels=['age'],
-#                       labels_transforms=[LabelMapping()],
-#                       stratify_label='age',
-#                       stratify_label_transforms=[LabelMapping()],
-#                       categorical_strat_label=False,
-#                       N_train_max=10000,
-#                       custom_stratification=CONFIG['db']["big_healthy"], sep=',')
-# train_test_model(data, manager, 3, models_hyperparams[0], None, "Age", "Big_Healthy", 10000, "", LabelMapping(), saving_dir)
-#
+## AGE Prediction at N=10K (only with CAT12)
+
+manager = DataManager(None, CONFIG['cat12']['metadata_path'],
+                      number_of_folds=3,
+                      labels=['age'],
+                      labels_transforms=[LabelMapping()],
+                      stratify_label='age',
+                      stratify_label_transforms=[LabelMapping()],
+                      categorical_strat_label=False,
+                      N_train_max=10000,
+                      custom_stratification=CONFIG['db']["big_healthy"], sep=',')
+train_test_model(data, manager, 3, models_hyperparams[0], None, "Age", "Big_Healthy", 10000, "", LabelMapping(), saving_dir)
+
 ## SEX Prediction at N=10K (only with CAT12)
 manager = DataManager(None, CONFIG['cat12']['metadata_path'],
                       number_of_folds=3,
@@ -153,28 +153,28 @@ manager = DataManager(None, CONFIG['cat12']['metadata_path'],
 train_test_model(data, manager, 3, models_hyperparams[1], None, "Sex", "Big_Healthy", 10000, "", LabelMapping(), saving_dir)
 
 
-# # Training on all data with N <= 1600
-# for (scaler, preproc) in zip(scalers, preprocs):
-#     input_path = os.path.join(root, data_dirs[preproc]['input_path'])
-#     metadata_path = os.path.join(root, data_dirs[preproc]['metadata_path'])
-#     print('Loading data...', flush=True)
-#     data = np.load(input_path, mmap_mode='r')
-#     print('Data loaded !', flush=True)
-#     for i_pb, (pb, label_map, label, strat_label_map, strat_label, db, db_config, hyperparams) in \
-#         enumerate(zip(pbs, label_mappings, labels, strat_label_mappings,
-#                       strat_labels, dbs, dbs_config, models_hyperparams)):
-#         for (N, nb_folds) in zip(nb_training_samples[i_pb], total_nb_folds[i_pb]):
-#             manager = DataManager(None, metadata_path,
-#                                   number_of_folds=nb_folds,
-#                                   labels=[label],
-#                                   labels_transforms=[label_map],
-#                                   stratify_label=strat_label,
-#                                   stratify_label_transforms=[strat_label_map],
-#                                   categorical_strat_label=(pb!="Age"),
-#                                   N_train_max=N,
-#                                   custom_stratification=CONFIG['db'][db_config], sep='\t')
-#             train_test_model(data, manager, nb_folds, hyperparams, scaler, pb, db, N, preproc, label_map, saving_dir)
-#             del(manager)
+# Training on all data with N <= 1600
+for (scaler, preproc) in zip(scalers, preprocs):
+    input_path = os.path.join(root, data_dirs[preproc]['input_path'])
+    metadata_path = os.path.join(root, data_dirs[preproc]['metadata_path'])
+    print('Loading data...', flush=True)
+    data = np.load(input_path, mmap_mode='r')
+    print('Data loaded !', flush=True)
+    for i_pb, (pb, label_map, label, strat_label_map, strat_label, db, db_config, hyperparams) in \
+        enumerate(zip(pbs, label_mappings, labels, strat_label_mappings,
+                      strat_labels, dbs, dbs_config, models_hyperparams)):
+        for (N, nb_folds) in zip(nb_training_samples[i_pb], total_nb_folds[i_pb]):
+            manager = DataManager(None, metadata_path,
+                                  number_of_folds=nb_folds,
+                                  labels=[label],
+                                  labels_transforms=[label_map],
+                                  stratify_label=strat_label,
+                                  stratify_label_transforms=[strat_label_map],
+                                  categorical_strat_label=(pb!="Age"),
+                                  N_train_max=N,
+                                  custom_stratification=CONFIG['db'][db_config], sep='\t')
+            train_test_model(data, manager, nb_folds, hyperparams, scaler, pb, db, N, preproc, label_map, saving_dir)
+            del(manager)
 
 
 

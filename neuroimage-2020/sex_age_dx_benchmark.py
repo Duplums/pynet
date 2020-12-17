@@ -299,13 +299,13 @@ plt.savefig('delta_age_err_analysis.png')
 ### Learning curves
 
 root = '/neurospin/psy_sbox/bd261576/checkpoints/regression_age_sex/Benchmark_IXI_HCP'
-net_names = ['ResNet34', 'DenseNet', 'tiny-VGG', 'tiny-DenseNet', 'Linear Model']
-nets = ['ResNet34', 'DenseNet', 'ColeNet', 'TinyDenseNet_Exp9', "LinearModel"]
-path_nets = ['ResNet/ResNet34', 'DenseNet', 'ColeNet', 'TinyDenseNet', 'LinearModel']
-preprocessings = ['quasi_raw']
+net_names = ['ResNet34', 'DenseNet', 'tiny-VGG']#, 'tiny-DenseNet', 'Linear Model']
+nets = ['ResNet34', 'DenseNet', 'ColeNet']#, 'TinyDenseNet_Exp9', "LinearModel"]
+path_nets = ['ResNet/ResNet34', 'DenseNet', 'ColeNet']#, 'TinyDenseNet', 'LinearModel']
+preprocessings = ['']
 
 all_metrics = {preproc: {pb: dict() for pb in ['Age', 'Sex', 'Dx']} for preproc in preprocessings}
-nb_training_samples = [[100, 300, 500, 1000, 1600],[100, 300, 500, 1000, 1600], [100, 300, 500]]
+nb_training_samples = [[100, 300, 500, 1000, 1600, 10000],[100, 300, 500, 1000, 1600, 10000], [100, 300, 500]]
 nb_epochs = [299]
 
 X = [[n for n in training for k in range(3+2*(n<10000)+5*(n<500))] for i,training in enumerate(nb_training_samples)]
@@ -337,7 +337,7 @@ for preproc in preprocessings:
                             path = os.path.join(root, preproc, path_net, 'N_{n}', pb,
                                                 'Test_{net}_{pb}_{db}{hyper}_fold{k}_epoch{e}.pkl')
                             all_results[preproc][pb][net][i][j][k] = get_pickle_obj(
-                                path.format(net=net, pb=pb, db=db if n!=10000 else "Big_Healthy", 
+                                path.format(net=net, pb=pb, db=db if n!=10000 else "Big_Healthy",
                                             hyper=hyperparams, k=k, n=n if n<10000 else '10K', e=e))
                         except FileNotFoundError:
                             path = os.path.join(root, preproc, path_net, 'N_{n}', pb,
@@ -347,8 +347,8 @@ for preproc in preprocessings:
                                             k=k, n=n if n<10000 else '10K', e=e))
 
             if pb == 'Age': # Compute MAE
-                all_metrics[preproc][pb][net] = [[np.mean(np.abs(np.array(all_results[preproc][pb][net][e][i][k]['y_true']).ravel()-
-                                                                 np.array(all_results[preproc][pb][net][e][i][k]['y_pred']).ravel()))
+                all_metrics[preproc][pb][net] = [[np.mean(np.abs(np.array(all_results[preproc][pb][net][e][i][k]['y_true'])-
+                                                                 np.array(all_results[preproc][pb][net][e][i][k]['y_pred'])))
                                                   for i,n in enumerate(nb_training_samples[n_pb])
                                                   for k in range(3+2*(n<10000)+5*(n<500)) ]
                                                  for e in range(len(nb_epochs))]
@@ -362,10 +362,10 @@ for preproc in preprocessings:
             for k, epoch in enumerate(nb_epochs):
                 seaborn.lineplot(x=X[n_pb], y=all_metrics[preproc][pb][net][k], marker='o', label=name, ax=axes[k, n_pb])
                 if pb != "Dx":
-                    axes[k, n_pb].set_xscale('log')
+                    axes[k, n_pb].set_x
 
-    axes[0,0].set_ylim(bottom=3, top=20)
-    axes[0,1].set_ylim(bottom=0.5, top=1)
+    axes[0,0].set_ylim(bottom=3)
+    axes[0,1].set_ylim(top=1)
     # axes[1,1].tick_params(labelleft=True)
     # axes[1,0].tick_params(labelleft=True)
     # axes[2,1].tick_params(labelleft=True)
@@ -379,9 +379,9 @@ for preproc in preprocessings:
             axes[i,j].set_ylabel(metrics[j])
             axes[i,j].set_xticks(nb_training_samples[j])
             if i == 0:
-                axes[i,j].set_title("{pb} prediction\n at $N={n}$ epochs".format(pb=_pb, n=_epoch+1), fontweight='bold')
+                axes[i,j].set_title("{pb} prediction\n at $N={n}$ epochs".format(pb=_pb, n=_epoch), fontweight='bold')
             else:
-                axes[i,j].set_title("$N={n}$ epochs".format(n=_epoch+1), fontweight='bold')
+                axes[i,j].set_title("$N={n}$ epochs".format(n=_epoch), fontweight='bold')
             if i == len(nb_epochs)-1:
                 axes[i,j].set_xlabel('Number of training samples')
     plt.tight_layout(w_pad=0.1, h_pad=0.2)

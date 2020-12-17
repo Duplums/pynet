@@ -201,7 +201,7 @@ def plot_losses(train_history, val_history=None, patterns_to_del=None,
                 axes[row, col].set_ylabel((ylabels or dict()).get(metric) or metric)
             axes[row, col].legend(loc='lower right')
             if experiment_names is not None:
-                axes[row, col].set_title(experiment_names[i], fontsize=12)
+                axes[row, col].set_title(experiment_names[i], fontsize=14)
             axes[row, col].grid()
             if ylim is not None:
                 if isinstance(ylim, list):
@@ -213,8 +213,9 @@ def plot_losses(train_history, val_history=None, patterns_to_del=None,
                         pass
             axes[row, col].grid()
         if titles is not None and metric in titles:
-            fig.suptitle(titles[metric], fontsize=14)
+            fig.suptitle(titles[metric], fontsize=16, fontweight='bold')
         plt.tight_layout()
+        fig.subplots_adjust(top=0.90, wspace=0.2, hspace=0.2)
         if saving_path and not same_plot:
             plt.savefig(saving_path+'_'+metric, format=output_format)
     if saving_path and same_plot:

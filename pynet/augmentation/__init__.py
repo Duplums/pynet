@@ -114,3 +114,11 @@ class Transformer(object):
         if not self.with_channel:
             transformed = transformed[0]
         return transformed
+
+    def __str__(self):
+        if len(self.transforms) == 0:
+            return '(Empty transformer)'
+        s = 'Composition of:'
+        for trf in self.transforms:
+            s += '\n\t- '+trf.__str__()
+        return s

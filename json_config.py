@@ -21,6 +21,14 @@ CONFIG = {
             'test': {'study': ['BSNIP'],
                      'diagnosis': ['control', 'schizophrenia']}
             },
+        'bipolar_kfolds' :{
+            'train': {
+                'study': ['BIOBD'], 'diagnosis': ['control', 'bipolar disorder']
+            },
+            'test': {
+                'study': ['BSNIP'], 'diagnosis': ['control', 'psychotic bipolar disorder']
+            }
+        },
         'big_healthy': {
             'train': {'study': ['OASIS3', 'CoRR', 'HCP', 'ABIDE1', 'GSP', 'RBP', 'ABIDE2', 'IXI', 'LOCALIZER',
                                 'MPI-LEIPZIG', 'ICBM', 'NPC', 'NAR'], 'diagnosis': 'control'},

@@ -114,12 +114,18 @@ class Base(Observable):
                 elif isinstance(checkpoint, dict):
                     if "model" in checkpoint:
                         try:
+                            ## TODO: Quick fix to modify
+                            for key in list(checkpoint['model'].keys()):
+                                if key.replace('module.', '') != key:
+                                    checkpoint['model'][key.replace('module.', '')] = checkpoint['model'][key]
+                                    del(checkpoint['model'][key])
+                            #####
                             unexpected= self.model.load_state_dict(checkpoint["model"], strict=False)
                             self.logger.info('Model loading info: {}'.format(unexpected))
                             self.logger.info('Model loaded')
                         except BaseException as e:
                             self.logger.error('Error while loading the model\'s weights: %s' % str(e))
-
+                            raise ValueError("")
                     if "optimizer" in checkpoint:
                         if load_optimizer:
                             try:
@@ -512,20 +518,11 @@ class Base(Observable):
             for dataitem in loader:
                 pbar.update()
                 inputs = dataitem.inputs.to(self.device)
-                list_targets = []
                 current_y, current_y_true = [], []
                 for _ in range(MC):
-                    targets = []
                     for item in (dataitem.outputs, dataitem.labels):
                         if item is not None:
-                            targets.append(item.to(self.device))
                             current_y_true.append(item.cpu().detach().numpy())
-                    if len(targets) == 1:
-                        targets = targets[0]
-                    elif len(targets) == 0:
-                        targets = None
-                    if targets is not None:
-                        list_targets.append(targets)
 
                     outputs = self.model(inputs)
                     current_y.append(outputs.cpu().detach().numpy())
@@ -533,4 +530,4 @@ class Base(Observable):
                 y_true.extend(np.array(current_y_true).swapaxes(0, 1))
         pbar.close()
 
-        return y, y_true
+        return np.array(y), np.array(y_true)

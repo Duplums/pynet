@@ -3,7 +3,7 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.metrics import roc_auc_score, balanced_accuracy_score
 from pynet.utils import get_pickle_obj
-from pynet.plotting.image import plot_data_reduced
+from pynet.plotting.image import plot_data_reduced, plot_losses
 from pynet.datasets.core import DataManager
 from json_config import CONFIG
 from pynet.history import History
@@ -200,19 +200,20 @@ plt.show()
 
 ## SimCLR Pretraining
 root = '/neurospin/psy_sbox/bd261576/checkpoints/self_supervision/simCLR/DenseNet/N_1600'
-
 exp_3 = ['unsupervised/noisy_spike_motion_crop_DA/', 'age_supervision/noisy_spike_motion_crop_DA',
          'age_supervision/noisy_spike_motion_DA/', 'unsupervised/noisy_spike_motion_cutout_DA',
          'unsupervised/crop_DA', 'unsupervised/cutout_DA', 'unsupervised/affine_DA', 'unsupervised/crop_cutout_DA',
          'age_implicit_supervision/cutout_DA', 'age_implicit_supervision/crop_DA/sigma_5',
-         'age_supervision/cutout_DA', 'age_supervision/crop_DA', 'age_implicit_supervision/crop_DA/sigma_0.5',
-         'age_implicit_supervision/crop_DA/sigma_1', 'age_implicit_supervision/crop_DA/sigma_2',
-         'age_implicit_supervision/crop_DA/sigma_3']
+         'age_supervision/cutout_DA', 'age_supervision/crop_DA',
+         'age_implicit_supervision/crop_DA/sigma_2/BatchSize_64',
+         'age_implicit_supervision/crop_DA/sigma_5/BatchSize_32',
+         'age_implicit_supervision/cutout_DA/sigma_5/BatchSize_32']
+
 sub_exp_3 = [[], [], [], [], ['window-0.25', 'window-0.5', 'window-0.75', 'window-0.5_unresized'],
              ['window-0.25', 'window-0.5', 'window-0.75'], [], [], ['window-0.5'], ['window-0.75', 'window-0.5'],
-             ['window-0.5'], ['window-0.5'], ['window-0.75'], ['window-0.75'], ['window-0.75'], ['window-0.75']]
+             ['window-0.5'], ['window-0.5'], ['window-0.75'], ['window-0.75'], ['window-0.25']]
 epochs = [[99], [50], [10], [299, 199, 99, 80, [200, 200, 30, 299], [10, 299, 99], # Exp 0, 1, 2, 3
-                             250, 299, 160, [160, 160], 299, 299, 90, 90, 90, 90]
+                             250, 299, 160, [160, 160], 299, 299, 299, 299, 299]
           ]
 for i, list_e in enumerate(epochs):
     for k, e in enumerate(list_e):
@@ -256,40 +257,160 @@ for i, list_e in enumerate(epochs):
                                                               bacc=balanced_accuracy_score(y_test, y_pred>0.5)))
 
 ## Plots the results of several DA with implicit age supervision and varying sigma on HC vs SCZ downstream task
-root_ = os.path.join(root, 'exp_3/age_implicit_supervision/')
-augmentations = ['cutout_DA', 'crop_DA', 'noisy_spike_motion_crop_DA']
-augmentation_names = ['Cutout patch 25% p=100%', 'Crop 75% p=100%',
-                      'Flip-Blur-Noise-Motion-Spike-Ghosting-Crop [75%] p=50%']
-hyperparams = ['window-0.25_', 'window-0.75_', '']
+# n=1600
+# baseline_n = [get_pickle_obj("/neurospin/psy_sbox/bd261576/checkpoints/regression_age_sex/Benchmark_IXI_HCP/"
+#                                "DenseNet/N_%i/Age/Test_DenseNet_BIOBD_block4_fold%s_epoch299.pkl"%(n,f))
+#                 for f in range(5)]
+# Age Pretraining:
+# SCZ Results:
+# For N=1600: AUC = 0.745 +/- 0.010 ; BAcc = 0.69 +/- 0.015
+# For N=500: AUC = 0.74 +/- 0.020 ; BAcc = 0.68 +/- 0.016
+# Bipolar Results:
+# For N=1600: AUC = 0.64 +/- 0.005; Bacc = 0.59 +/- 0.012
+# For N=500: AUC = 0.61 +/- 0.015; BAcc = 0.58 +/- 0.020
+
+
+root_ = os.path.join('/neurospin/psy_sbox/bd261576/checkpoints/self_supervision/simCLR/DenseNet/N_%s/'
+                     'exp_3/age_implicit_supervision/')
+augmentations = ['crop_DA'] #['cutout_DA', 'crop_DA', 'noisy_spike_motion_crop_DA']
+augmentation_names = ['Crop 75% p=100%']#['Cutout patch 25% p=100%', 'Crop 75% p=100%',
+                                        #'Flip-Blur-Noise-Motion-\nSpike-Ghosting-Crop [75%] p=50%']
+hyperparams = ['window-0.75_'] #['window-0.25_', 'window-0.75_', '']
+dbs = ['SCZ_VIP', 'BIOBD', 'HCP_IXI']
 sigmas = [0, 0.5, 1, 2, 3, 5]
-epochs = [[100, 100, 100, 100, 140], [30, 90, 90, 90, 90, 160], [240, 240, 240, 240, 240, 240]]
-baseline = {'b_acc': 0.72, 'auc': 0.78}
-results = {s: dict() for s in sigmas}
-fig = plt.figure(figsize=(8, 8))
-for i, (aug, aug_name, hyper) in enumerate(zip(augmentations, augmentation_names, hyperparams)):
-    for sigma, e in zip(sigmas, epochs[i]):
-        h_val = History.load(os.path.join(root_, aug, 'sigma_'+ str(sigma),
-                                          "Validation_DenseNet_HCP_IXI_%s0_epoch_%s.pkl"%(hyper, e)))
-        train = get_pickle_obj(os.path.join(root_, aug, 'sigma_'+ str(sigma),
-                                            'block_outputs/DenseNet_Block4_SCZ_VIP_%sfold0_epoch%s.pkl'%(hyper, e)))
-        test = get_pickle_obj(os.path.join(root_, aug, 'sigma_'+ str(sigma),
-                                           'block_outputs/DenseNet_Block4_BSNIP_%sfold0_epoch%s.pkl'%(hyper,e)))
-        y_test, y_pred = train_linear_model(train, test, reg=False)
-        results[sigma][aug] = {'acc_pretext': h_val['accuracy on validation set'][1][-1],
-                               'auc': roc_auc_score(y_test, y_pred),
-                               'b_acc': balanced_accuracy_score(y_test, y_pred>0.5)}
+epochs = [299, 299, 299, 299, 299, 299]
+all_N = [500, 1600]
+nb_folds = 3
+tested_epochs = list(range(10, 300, 10)) + [299]
 
-    plt.scatter([results[s][aug]['acc_pretext'] for s in sigmas], [results[s][aug]['auc'] for s in sigmas], marker='+',
-                 label=aug_name)
-    for i, s in enumerate(sigmas):
-        plt.annotate("$\sigma=%.1f$"%s, (0.001+results[s][aug]['acc_pretext'], 0.001+results[s][aug]['auc']))
 
-plt.axhline(baseline['auc'], color='gray', linestyle='dotted', label="Supervised on SCZ vs HC")
-plt.xlabel('Accuracy on pretext task', fontsize=14)
-plt.ylabel('AUC on SCZ vs HC', fontsize=14)
-plt.title('Unsupervised SimCLR With Age Prior $\sigma$', fontweight='bold', fontsize=16)
-plt.legend()
+baseline = {'SCZ_VIP': {'b_acc': 0.72, 'auc': 0.78},
+            'BIOBD': {'b_acc': 0.63, 'auc': 0.68},
+           }
+
+baseline_age = {1600: {'SCZ_VIP': {'b_acc': 0.69, 'auc': 0.745},
+                        'BIOBD': {'b_acc': 0.59, 'auc': 0.64},
+                        'HCP_IXI': {'mae': 5.65, 'r': 0.86}},
+                500: {'SCZ_VIP': {'b_acc': 0.68, 'auc': 0.74},
+                      'BIOBD': {'b_acc': 0.58, 'auc': 0.61},
+                      'HCP_IXI': {'mae': 6.02, 'r': 0.83}}
+                }
+results = {aug: dict() for aug in augmentations}
+results_batch_size = {aug: dict() for aug in augmentations}
+
+# Representation Quality at N={500, 1600} for CROP 75%/CUTOUT25% during contrastive training
+res = {N: {aug+hyper: {db: {s: [[get_pickle_obj(os.path.join(root_ % N, aug, 'sigma_' + str(s),
+                                                       "Test_DenseNet_%s_%sblock4_fold%i_epoch%s.pkl" % (
+                                                           db, hyper, f, e))) for f in range(nb_folds)]
+                          for e in tested_epochs]
+                      for s in sigmas}
+                 for db in dbs
+                 } for (aug, hyper) in zip(augmentations, hyperparams)}
+       for N in all_N}
+
+
+metric = {'SCZ_VIP': roc_auc_score, 'BIOBD': roc_auc_score,
+          'HCP_IXI': lambda y_true, y: np.mean(np.abs(y.ravel()-y_true.ravel()))}
+res_metric = {N: {aug+hyper: {db: {s: [[metric[db](res[N][aug+hyper][db][s][e][f]['y_true'],
+                                             res[N][aug+hyper][db][s][e][f]['y'] if db=='HCP_IXI' else
+                                                   res[N][aug+hyper][db][s][e][f]['y'][:, 1]) for f in range(nb_folds)]
+                              for e in range(len(tested_epochs))]
+                          for s in sigmas} for db in dbs}
+               for aug,hyper in zip(augmentations, hyperparams)}
+           for N in all_N}
+
+for N in all_N:
+    fig, big_axes = plt.subplots(len(augmentations), 1, figsize=(12, 15), sharey='col', squeeze=False)
+    for row, (big_ax, aug_name) in enumerate(zip(big_axes[:,0], augmentation_names), start=1):
+        big_ax.set_title(aug_name, fontweight='bold', fontsize=16)
+        big_ax.axis('off')
+        big_ax._frameon = False
+        big_ax.title.set_position([.5, 1.08])
+    for k, (aug, hyper) in enumerate(zip(augmentations, hyperparams)):
+        for i, db in enumerate(dbs):
+            ax = fig.add_subplot(len(augmentations), len(dbs), k*len(dbs)+i+1)
+            for s in [0, 1, 2, 3, 5]:
+                seaborn.lineplot(x=[e for e in tested_epochs for f in range(nb_folds)],
+                                 y=[res_metric[N][aug+hyper][db][s][e][f] for e in range(len(tested_epochs))
+                                    for f in range(nb_folds)],
+                                 marker='o', label='$\sigma=%.1f$' % s, ax=ax)
+            ax.set_title('Performance on %s with $N_{pretrained}=%i$ ' % (db, N))
+            ax.set_xlabel('Contrastive training epochs')
+            if db == "HCP_IXI":
+                ax.set_ylabel('MAE')
+                ax.axhline(baseline_age[N][db]['mae'], color='red', linestyle='dotted',
+                                   label="Standard Age Pretraining")
+            else:
+                ax.set_ylabel('AUC')
+                ax.axhline(baseline[db]['auc'], color='gray', linestyle='dotted', label="Supervised on %s"%db)
+                ax.axhline(baseline_age[N][db]['auc'], color='red', linestyle='dotted',
+                                   label="Standard Age Pretraining")
+            ax.legend()
+    fig.tight_layout(pad=1)
+    fig.savefig('scz_bip_perf_contrastive_learning_N%i.png'%N)
+
+# Final performance on SCZ vs HC and BIPOLAR vs HC at 300 epochs for all the transformations and N={500, 1600}
+# training samples in pretraining.
+fig, axes = plt.subplots(2, 3, figsize=(15, 10), sharey='row')
+for i,db in enumerate(dbs):
+    for j, (aug, aug_name, hyper) in enumerate(zip(augmentations, augmentation_names, hyperparams)):
+        for sigma, e in zip(sigmas, epochs):
+            batch_size = ['']
+            # if sigma == 5: ## Stress out that the batch size does not change the representation
+            #     batch_size = ['', 'BatchSize_32']
+            for b_size in batch_size:
+                if b_size != '': e = 299
+                h_val = History.load(os.path.join(root_, aug, 'sigma_'+ str(sigma), b_size,
+                                                  "Validation_DenseNet_HCP_IXI_%s2_epoch_%s.pkl"%(hyper, e))).to_dict()
+                res = [get_pickle_obj(os.path.join(root_, aug, 'sigma_'+str(sigma),
+                                     "Test_DenseNet_%s_%sblock4_fold%i_epoch%s.pkl"%(db, hyper, f, e))) for f in range(3)]
+                roc_auc = [roc_auc_score(res[k]['y_true'], res[k]['y'][:,1]) for k in range(3)]
+
+                if b_size == '': # Implicit batch size == 16
+                    results[aug][sigma] = {'acc_pretext': np.mean([h_val['accuracy on validation set'][k][-1] for k in range(3)]),
+                                           'auc': roc_auc
+                                           }
+                # else:
+                #     results_batch_size[aug] = {
+                #         'acc_pretext': h_val['accuracy on validation set'][1][-1],
+                #         'auc': roc_auc_score(y_test, y_pred),
+                #         'b_acc': balanced_accuracy_score(y_test, y_pred > 0.5)}
+        axes[i,j].errorbar([results[aug][s]['acc_pretext'] for s in sigmas],
+                         [np.mean(results[aug][s]['auc']) for s in sigmas],
+                         yerr=[np.std(results[aug][s]['auc']) for s in sigmas],
+                         marker='o',
+                        label='Batch size 16')
+        # axes[i].scatter(results_batch_size[aug]['acc_pretext'], results_batch_size[aug]['auc'], marker='*',
+        #                 label='Batch Size 32')
+        # axes[i].annotate("$\sigma=5.0$", (0.001 + results_batch_size[aug]['acc_pretext'],
+        #                                   0.001 + results_batch_size[aug]['auc']))
+        for s in sigmas:
+            axes[i,j].annotate("$\sigma=%.1f$"%s,
+                               (0.001+results[aug][s]['acc_pretext'], 0.001+np.mean(results[aug][s]['auc'])))
+
+        axes[i,j].axhline(baseline[db]['auc'], color='gray', linestyle='dotted', label="Supervised on SCZ vs HC")
+        axes[i,j].axhline(baseline_age[N][db]['auc'], color='red', linestyle='dotted', label="Standard Age Pretraining")
+        axes[i,j].set_xlabel('Accuracy on pretext task', fontsize=14)
+        axes[i,j].set_ylabel('AUC on %s'%db, fontsize=14)
+        axes[i,j].set_title(aug_name, fontweight='bold', fontsize=14)
+        axes[i,j].legend()
+axes[0,0].set_ylim([0.7, 0.8])
+axes[1,0].set_ylim([0.6, 0.7])
+fig.subplots_adjust(top=0.80)
+fig.suptitle('Unsupervised SimCLR With Age Similarity Prior $\sigma$', fontweight='bold', fontsize=16)
 fig.savefig('simclr_perf_implicit_age_sup.png')
+
+## Plots losses
+# fig, axes = plot_losses(h, h_val,
+#             patterns_to_del=['validation_', ' on validation set'],
+#             metrics=['accuracy', 'loss'],
+#             experiment_names=['$\sigma=0$', '$\sigma=0.5$', '$\sigma=1$', '$\sigma=2$', '$\sigma=3$', '$\sigma=5$'],
+#             ylabels={'accuracy': 'Accuracy', 'loss': 'loss'},
+#             ylim={'loss': [0,7.5]},
+#             titles={'loss': 'Flip-Blur-Noise-Motion-Spike-Ghosting-Crop [75%] p=50% With Age Prior $\sigma$'},
+#             same_plot=True,
+#             figsize=(15,15), saving_path='losses_simCLR_implicit_age_sup_all.png')
+
 
 ## Age + Sex/Age Pretraining
 root = '/neurospin/psy_sbox/bd261576/checkpoints/regression_age_sex/Benchmark_IXI_HCP/DenseNet/'

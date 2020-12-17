@@ -220,7 +220,10 @@ def get_binary_classification_metrics(path, epochs_tested, folds_tested, MCTest=
         print('MI = {} +/- {}'.format(np.mean(MI), np.std(MI)))
 
     else:
-        test_results = [{'y_pred': expit(np.array(t['y_pred'])), 'y_true': np.array(t['y_true'])} for t in test_results]
+        try:
+            test_results = [{'y_pred': expit(np.array(t['y_pred'])), 'y_true': np.array(t['y_true'])} for t in test_results]
+        except KeyError:
+            test_results = [{'y_pred': np.array(t['y'])[:,1], 'y_true': np.array(t['y_true'])} for t in test_results]
 
     y_pred, y_true = np.array([t['y_pred'] for t in test_results]), np.array([t['y_true'] for t in test_results])
     all_ece = [ECE_score(t['y_pred'], t['y_true']) for t in test_results]

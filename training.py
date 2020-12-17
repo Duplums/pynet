@@ -67,8 +67,10 @@ class BaseTrainer():
             loss = ConcreteDropoutLoss(net, nn.BCEWithLogitsLoss(), weight_regularizer=1e-6, dropout_regularizer=1e-5)
         elif name == "NTXenLoss":
             loss = NTXenLoss(temperature=0.1, return_logits=True)
-        elif name == "SupervisedGaussianNTXenLoss": ## Default value for sigma == 5
-            loss = SupervisedGaussianNTXenLoss(temperature=0.1, sigma=args.loss_param or 5, return_logits=True)
+        elif name == "GeneralizedSupervisedNTXenLoss": ## Default value for sigma == 5
+            loss = GeneralizedSupervisedNTXenLoss(temperature=0.1, kernel='rbf', sigma=args.loss_param or 5, return_logits=True)
+        elif name == "AgeSexSupervisedNTXenLoss": ## Default value for sigma == 5
+            loss = AgeSexSupervisedNTXenLoss(temperature=0.1, sigma=args.loss_param or 5, return_logits=True)
         elif name == "multi_l1_bce": # mainly for (age, sex) prediction
             loss = MultiTaskLoss([nn.L1Loss(), nn.BCEWithLogitsLoss()], weights=[1, 1])
         elif name == "l1_sup_NTXenLoss": # Mainly for supervised SimCLR
@@ -200,7 +202,7 @@ class BaseTrainer():
         input_size = None
 
         projection_labels = {
-            'diagnosis': ['control', 'FEP', 'schizophrenia']
+            'diagnosis': ['control', 'FEP', 'schizophrenia', 'bipolar disorder', 'psychotic bipolar disorder']
         }
 
         stratif = CONFIG['db'][args.db]
@@ -231,7 +233,8 @@ class BaseTrainer():
                         'site': [
                             LabelMapping(**{site: indice for (indice, site) in enumerate(sorted(set(df['site'])))}),
                             True],
-                        'diagnosis': [LabelMapping(schizophrenia=1, FEP=1, control=0), True]
+                        'diagnosis': [LabelMapping(schizophrenia=1, FEP=1, control=0,
+                                                   **{"bipolar disorder": 1, "psychotic bipolar disorder": 1}), True]
                         }
 
         assert set(labels) <= set(known_labels.keys()), \
@@ -254,7 +257,7 @@ class BaseTrainer():
         if args.model == "SimCLR":
             if args.test and args.test=='with_training':
                 raise ValueError('Impossible to build a DataManager for SimCLR in training and test mode')
-            elif not args.test:
+            else:
                 dataset_cls = SimCLRDataset
 
         manager = DataManager(args.input_path, args.metadata_path,

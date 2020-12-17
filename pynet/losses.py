@@ -112,11 +112,26 @@ class SupervisedNTXenLoss(nn.Module):
     def __str__(self):
         return "{}(alpha={})".format(type(self).__name__, self.alpha)
 
-class SupervisedGaussianNTXenLoss(nn.Module):
-    def __init__(self, sigma=1, temperature=0.1, return_logits=False):
+class GeneralizedSupervisedNTXenLoss(nn.Module):
+    def __init__(self, kernel='rbf', temperature=0.1, return_logits=False, sigma=1.0):
+        """
+        :param kernel: a callable function f: [K, *] x [K, *] -> [K, K]
+                                              y1, y2          -> f(y1, y2)
+                        where (*) is the dimension of the labels (yi)
+        default: an rbf kernel parametrized by 'sigma' which corresponds to gamma=1/(2*sigma**2)
+
+        :param temperature:
+        :param return_logits:
+        """
+
         # sigma = prior over the label's range
         super().__init__()
+        self.kernel = kernel
         self.sigma = sigma
+        if self.kernel == 'rbf':
+            self.kernel = lambda y1, y2: rbf_kernel(y1, y2, gamma=1./(2*self.sigma**2))
+        else:
+            assert hasattr(self.kernel, '__call__'), 'kernel must be a callable'
         self.temperature = temperature
         self.return_logits = return_logits
         self.INF = 1e8
@@ -133,11 +148,11 @@ class SupervisedGaussianNTXenLoss(nn.Module):
         sim_zii = sim_zii - self.INF * torch.eye(N, device=z_i.device)
         sim_zjj = sim_zjj - self.INF * torch.eye(N, device=z_i.device)
 
-        all_labels = labels.view(N, -1).repeat(2, 1).detach().cpu().numpy()
-        weights = rbf_kernel(all_labels, all_labels, gamma=1./(2*self.sigma**2)) # [2N, 2N]
+        all_labels = labels.view(N, -1).repeat(2, 1).detach().cpu().numpy() # [2N, *]
+        weights = self.kernel(all_labels, all_labels) # [2N, 2N]
         weights = weights * (1 - np.eye(2*N)) # puts 0 on the diagonal
         weights /= weights.sum(axis=1)
-        # if sigma->0, we retrieve the classical NTXenLoss (without labels)
+        # if 'rbf' kernel and sigma->0, we retrieve the classical NTXenLoss (without labels)
         sim_Z = torch.cat([torch.cat([sim_zii, sim_zij], dim=1), torch.cat([sim_zij.T, sim_zjj], dim=1)], dim=0) # [2N, 2N]
         log_sim_Z = func.log_softmax(sim_Z, dim=1)
 
@@ -151,9 +166,33 @@ class SupervisedGaussianNTXenLoss(nn.Module):
         return loss
 
     def __str__(self):
-        return "{}(temp={}, sigma={})".format(type(self).__name__, self.temperature, self.sigma)
+        return "{}(temp={}, kernel={}, sigma={})".format(type(self).__name__, self.temperature,
+                                                         self.kernel.__name__, self.sigma)
 
 
+class AgeSexSupervisedNTXenLoss(GeneralizedSupervisedNTXenLoss):
+    """
+    We assume the inputs labels y have shape [N, 2] where the fisrt component is the age
+    and the second component is the sex. The 'rbf' kernel is used for age and the kernel for sex is defined as:
+    k(s1, s2) = 1_{s1=s2}. The total kernel is defined as:
+
+                k([a1, s1], [a2, s2]) = rbf(a1, a2)k(s1, s2)
+
+    """
+    def _kernel(self, y1, y2):
+        """
+        :param y1: np.array of shape [N, 2] (1st comp: age, 2nd comp: sex)
+        :param y2: np.array of shape [N, 2] (1st comp: age, 2nd comp: sex)
+        :return: np.array K of shape [N, N] where K[i,j] = rbf(y1[i,0],y2[j,0])*1_{y1[i,1]==y2[j,1]}
+        """
+        rbf = rbf_kernel(y1[:, 0].reshape(-1, 1), y2[:, 0].reshape(-1, 1), gamma=1. / (2 * self.sigma ** 2))
+        S = np.kron(y1[:,1], np.ones((len(y1), 1))) == np.kron(y2[:,1], np.ones((len(y2), 1))).T
+
+        return rbf * S
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.kernel = self._kernel
 
 class SBRLoss(nn.Module):
     """

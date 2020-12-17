@@ -1,6 +1,7 @@
 from pynet.core import Base
 from pynet.datasets.core import ArrayDataset, DataItem
 import torch
+from torch.utils.data import SequentialSampler
 from pynet.augmentation import *
 from torchio.transforms import RandomAffine, RandomMotion
 from pynet.transforms import Crop
@@ -22,11 +23,11 @@ class SimCLRDataset(ArrayDataset):
             # compose_transforms.register(add_blur, probability=0.5, sigma=(0.1, 1))
             # compose_transforms.register(add_ghosting, intensity=1, probability=0.5, axis=0)
             # compose_transforms.register(RandomMotion(degrees=10, translation=10, num_transforms=2, p=1),
-            #                             with_channel=True, probability=0.5)
+            #                            with_channel=True, probability=0.5)
             # compose_transforms.register(add_noise, sigma=(0.1, 1), probability=0.5)
             # compose_transforms.register(add_spike, n_spikes=2, probability=0.5)
-            compose_transforms.register(cutout, probability=1, patch_size=32, inplace=False)
-            # compose_transforms.register(Crop((96, 96, 96), "random", resize=True), probability=0.5)
+            #compose_transforms.register(cutout, probability=1, patch_size=64, random_size=True, inplace=False)
+            compose_transforms.register(Crop((96, 96, 96), "random", resize=True), probability=1)
             # compose_transforms.register(add_biasfield, probability=0.1, coefficients=0.5)
             # compose_transforms = RandomAffine(scales=1.0, degrees=40, translation=40, p=1)
 
@@ -74,6 +75,9 @@ class SimCLRDataset(ArrayDataset):
         _inputs = np.stack((_inputs_i, _inputs_j), axis=0)
 
         return DataItem(inputs=_inputs, outputs=_outputs, labels=_labels)
+
+    def __str__(self):
+        return '\nSimCLRDataset TF\n' + str(self.self_supervision)
 
 
 class SimCLR(Base):
@@ -141,6 +145,60 @@ class SimCLR(Base):
         pbar.close()
         return loss, values
 
+    def features_avg_test(self, loader, M=10):
+        """ Evaluate the model at test time using the feature averaging strategy as described in
+        Improving Transformation Invariance in Contrastive Representation Learning, ICLR 2021, A. Foster
+
+        :param
+        loader: a pytorch Dataset
+            the data loader.
+        M: int, default 10
+            nb of times we sample t~T such that we transform a sample x -> z := f(t(x))
+        :returns
+            y: array-like dims (n_samples, M, ...) where ... is the dims of the network's output
+            the predicted data.
+            y_true: array-like dims (n_samples, M,  ...) where ... is the dims of the network's output
+            the true data
+        """
+        M = int(M)
+
+        assert M//2 == M/2.0, "Nb of feature vectors averaged should be odd"
+
+        if not isinstance(loader.sampler, SequentialSampler):
+            raise ValueError("The dataloader must use the sequential sampler (avoid random_sampler option)")
+
+        print(loader.dataset, flush=True)
+
+
+        self.model.eval()
+        nb_batch = len(loader)
+        pbar = tqdm(total=nb_batch*(M//2), desc="Mini-Batch")
+
+        with torch.no_grad():
+            y, y_true = [], []
+            for _ in range(M//2):
+                current_y, current_y_true = [[], []], []
+                for dataitem in loader:
+                    pbar.update()
+                    inputs = dataitem.inputs.to(self.device)
+                    if dataitem.labels is not None:
+                        current_y_true.extend(dataitem.labels.cpu().detach().numpy())
+                    z_i = self.model(inputs[:, 0, :])
+                    z_j = self.model(inputs[:, 1, :])
+                    current_y[0].extend(z_i.cpu().detach().numpy())
+                    current_y[1].extend(z_j.cpu().detach().numpy())
+                y.extend(current_y)
+                y_true.extend([current_y_true, current_y_true])
+            pbar.close()
+            # Final dim: y [M, n_samples, ...] and y_true [M, n_samples, ...]
+            # Sanity check
+            assert np.all(np.array(y_true)[0,:] == np.array(y_true)), "Wrong iteration order through the dataloader"
+            y = np.array(y).swapaxes(0, 1)
+            y_true = np.array(y_true).swapaxes(0, 1)
+
+        return y, y_true
+
+
     def test(self, loader, with_visuals=False, **kwargs):
         """ Evaluate the model on the validation data. The test is done in a usual way for a supervised task.
 
@@ -200,9 +258,7 @@ class SimCLR(Base):
                     name += " on validation set"
                     if name not in values:
                         values[name] = 0
-                    print()
                     values[name] += metric(logits, target) / nb_batch
-
                 aux_losses = (self.loss.get_aux_losses() if hasattr(self.loss, 'get_aux_losses') else dict())
                 for name, aux_loss in aux_losses.items():
                     name += " on validation set"
