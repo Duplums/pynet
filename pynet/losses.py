@@ -170,10 +170,11 @@ class GeneralizedSupervisedNTXenLoss(nn.Module):
                                                          self.kernel.__name__, self.sigma)
 
 
-class AgeSexSupervisedNTXenLoss(GeneralizedSupervisedNTXenLoss):
+class ContinuousDiscreteSupervisedNTXenLoss(GeneralizedSupervisedNTXenLoss):
     """
-    We assume the inputs labels y have shape [N, 2] where the fisrt component is the age
-    and the second component is the sex. The 'rbf' kernel is used for age and the kernel for sex is defined as:
+    We assume the inputs labels y have shape [N, 2] where the 1st component is continuous (age typically)
+    and the 2nd component is discrete (sex or dx typically).
+    The 'rbf' kernel is used for the 1st comp and the kernel for the 2nd comp is defined as:
     k(s1, s2) = 1_{s1=s2}. The total kernel is defined as:
 
                 k([a1, s1], [a2, s2]) = rbf(a1, a2)k(s1, s2)
@@ -181,8 +182,8 @@ class AgeSexSupervisedNTXenLoss(GeneralizedSupervisedNTXenLoss):
     """
     def _kernel(self, y1, y2):
         """
-        :param y1: np.array of shape [N, 2] (1st comp: age, 2nd comp: sex)
-        :param y2: np.array of shape [N, 2] (1st comp: age, 2nd comp: sex)
+        :param y1: np.array of shape [N, 2] (1st comp: continuous, 2nd comp: discrete)
+        :param y2: np.array of shape [N, 2] (1st comp: continuous, 2nd comp: discrete)
         :return: np.array K of shape [N, N] where K[i,j] = rbf(y1[i,0],y2[j,0])*1_{y1[i,1]==y2[j,1]}
         """
         rbf = rbf_kernel(y1[:, 0].reshape(-1, 1), y2[:, 0].reshape(-1, 1), gamma=1. / (2 * self.sigma ** 2))

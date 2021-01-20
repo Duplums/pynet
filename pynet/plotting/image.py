@@ -13,11 +13,12 @@ Common functions to display images.
 
 # Import
 import logging
-import torch
+import torch, copy
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib.colors as colors
+from matplotlib.ticker import FuncFormatter
 from sklearn.manifold import TSNE
 from skimage.transform import resize
 from sklearn.decomposition import PCA
@@ -85,35 +86,42 @@ def age_discrimination(X, y, age_max_down, age_min_up):
         np.min(y), age_max_down, len(X[y < age_max_down]), age_min_up, np.max(y), len(X[y > age_min_up])))
     plt.show()
 
-def plot_data_reduced(X, labels=None, reduction='pca', cmap=plt.cm.plasma, ax=None, title=None):
+def plot_data_reduced(X, labels=None, labels_title=None, continuous_labels=None, inv_continuous_labels_tf=(lambda x: x),
+                      continuous_labels_title=None,  reduction='pca', cmap=plt.cm.plasma, ax=None,
+                      title=None, labels_mapping_fn=(lambda x: x), **kwargs):
     # Assume that X has dimension (n_samples, ...) and labels is a list of n_samples labels
     # associated to X
     assert reduction in ['pca', 't_sne'], "Reduction method not implemented yet"
     if ax is None:
         fig, ax = plt.subplots(figsize=(20, 30))
-
     if reduction == 'pca':
-        pca = PCA(n_components=2)
+        pca = PCA(n_components=2, **kwargs)
         # Do the SVD
         pca.fit(X.reshape(len(X), -1))
         # Apply the reduction
         PC = pca.transform(X.reshape(len(X), -1))
     else:
-        PC = TSNE(n_components=2).fit_transform(X.reshape(len(X), -1))
+        PC = TSNE(n_components=2, **kwargs).fit_transform(X.reshape(len(X), -1))
     # Color each point according to its label
+    sc = ax.scatter(PC[:, 0], PC[:, 1], c=labels, s=continuous_labels, cmap=cmap)
     if labels is not None:
-        labels = np.array(labels)
-        label_mapping = {l: cmap(int(i * float(cmap.N - 1) / len(set(labels)))) for (i, l) in enumerate(set(labels))}
-        for l in label_mapping:
-            ax.scatter(PC[:,0][labels == l], PC[:,1][labels == l], c=[label_mapping[l]], label=l)
-    else:
-        ax.scatter(PC[:,0], PC[:,1], alpha=0.8)
+        handles, labels_leg = sc.legend_elements(fmt=FuncFormatter(lambda x, pos: labels_mapping_fn(x)))
+        legend1 = ax.legend(handles, labels_leg, loc="lower left", title=labels_title)
+        ax.add_artist(legend1)
+    if continuous_labels is not None:
+        handles, labels_leg = sc.legend_elements(func=inv_continuous_labels_tf,
+                                                 prop="sizes", alpha=0.6)
+        legend2 = ax.legend(handles, labels_leg, loc="upper right", title=continuous_labels_title)
+
     if reduction == 'pca':
         ax.set_xlabel("PC1 (var=%.2f)" % pca.explained_variance_ratio_[0])
         ax.set_ylabel("PC2 (var=%.2f)" % pca.explained_variance_ratio_[1])
-    ax.legend()
+    else:
+        ax.set_xlabel("Component 1")
+        ax.set_ylabel("Component 2")
     if title:
-        ax.set_title(title)
+        ax.set_title(title, fontweight="bold", fontsize=14)
+    return ax
 
 def plot_losses(train_history, val_history=None, patterns_to_del=None,
                 metrics=None, experiment_names=None, titles=None, ylabels=None,

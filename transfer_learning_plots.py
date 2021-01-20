@@ -9,6 +9,7 @@ from json_config import CONFIG
 from pynet.history import History
 import matplotlib.pyplot as plt
 import seaborn
+from scipy.stats import pearsonr
 import pandas as pd
 import pickle
 seaborn.set_style("darkgrid")
@@ -256,52 +257,73 @@ for i, list_e in enumerate(epochs):
                     print("\t(Dx) AUC={auc}\n\tBacc={bacc}".format(auc=roc_auc_score(y_test, y_pred),
                                                               bacc=balanced_accuracy_score(y_test, y_pred>0.5)))
 
-## Plots the results of several DA with implicit age supervision and varying sigma on HC vs SCZ downstream task
-# n=1600
+## Plots the results of several DA with implicit age supervision and varying sigma on HC vs SCZ + HC vs BIP downstream tasks
+# n="10K"
 # baseline_n = [get_pickle_obj("/neurospin/psy_sbox/bd261576/checkpoints/regression_age_sex/Benchmark_IXI_HCP/"
-#                                "DenseNet/N_%i/Age/Test_DenseNet_BIOBD_block4_fold%s_epoch299.pkl"%(n,f))
-#                 for f in range(5)]
+#                                "DenseNet/N_%s/Age/old_training/Test_DenseNet_SCZ_VIP_block4_fold%s_epoch149.pkl"%(n,f))
+#                 for f in range(1)]
 # Age Pretraining:
 # SCZ Results:
+# For N=10K, AUC = 0.745 +/- 0.016; Bacc = 0.69 +/- 0.016
 # For N=1600: AUC = 0.745 +/- 0.010 ; BAcc = 0.69 +/- 0.015
 # For N=500: AUC = 0.74 +/- 0.020 ; BAcc = 0.68 +/- 0.016
 # Bipolar Results:
+# For N=10K, AUC = 0.63 +/- 0.02; Bacc = 0.60 +/- 0.014
 # For N=1600: AUC = 0.64 +/- 0.005; Bacc = 0.59 +/- 0.012
 # For N=500: AUC = 0.61 +/- 0.015; BAcc = 0.58 +/- 0.020
 
 
 root_ = os.path.join('/neurospin/psy_sbox/bd261576/checkpoints/self_supervision/simCLR/DenseNet/N_%s/'
-                     'exp_3/age_implicit_supervision/')
-augmentations = ['crop_DA'] #['cutout_DA', 'crop_DA', 'noisy_spike_motion_crop_DA']
-augmentation_names = ['Crop 75% p=100%']#['Cutout patch 25% p=100%', 'Crop 75% p=100%',
-                                        #'Flip-Blur-Noise-Motion-\nSpike-Ghosting-Crop [75%] p=50%']
-hyperparams = ['window-0.75_'] #['window-0.25_', 'window-0.75_', '']
-dbs = ['SCZ_VIP', 'BIOBD', 'HCP_IXI']
-sigmas = [0, 0.5, 1, 2, 3, 5]
+                     'exp_3/age_sex_implicit_supervision/')
+augmentations = ['cutout_DA']#, 'crop_DA', 'noisy_spike_motion_crop_DA']
+augmentation_names = ['Cutout patch 25% p=100%']#,'Crop 75% p=100%', 'Flip-Blur-Noise-Motion-\nSpike-Ghosting-Crop [75%] p=50%']
+hyperparams = ['window-0.25_', 'window-0.75_', '']
+dbs = ['SCZ_VIP', 'BIOBD']#, 'HCP_IXI_age', 'HCP_IXI_sex']
+prediction_tasks = ['SCZ vs CTL', 'Bipolar vs CTL', 'Age Prediction', 'Sex Prediction']
+sigmas = [5] # [0, 0.5, 1, 2, 3, 5]
 epochs = [299, 299, 299, 299, 299, 299]
-all_N = [500, 1600]
-nb_folds = 3
-tested_epochs = list(range(10, 300, 10)) + [299]
+all_N = ['10K']#[500, 1600, '10K']
+nb_folds = 1
+tested_epochs = list(range(10, 100, 10))# list(range(10, 300, 10))+[299]
 
 
 baseline = {'SCZ_VIP': {'b_acc': 0.72, 'auc': 0.78},
             'BIOBD': {'b_acc': 0.63, 'auc': 0.68},
            }
 
-baseline_age = {1600: {'SCZ_VIP': {'b_acc': 0.69, 'auc': 0.745},
+baseline_age = {
+                '10K': {'SCZ_VIP': {'b_acc': 0.69, 'auc': 0.745},
+                        'BIOBD': {'b_acc': 0.60, 'auc': 0.63},
+                        'HCP_IXI_age': {'mae': 4.02, 'r': 0.93}},
+                1600: {'SCZ_VIP': {'b_acc': 0.69, 'auc': 0.745},
                         'BIOBD': {'b_acc': 0.59, 'auc': 0.64},
-                        'HCP_IXI': {'mae': 5.65, 'r': 0.86}},
+                        'HCP_IXI_age': {'mae': 5.65, 'r': 0.86}},
                 500: {'SCZ_VIP': {'b_acc': 0.68, 'auc': 0.74},
                       'BIOBD': {'b_acc': 0.58, 'auc': 0.61},
-                      'HCP_IXI': {'mae': 6.02, 'r': 0.83}}
+                      'HCP_IXI_age': {'mae': 6.02, 'r': 0.83}}
                 }
+
+baseline_sex = {
+                '10K': {'SCZ_VIP': {'b_acc': 0.65, 'auc': 0.72},
+                        'BIOBD': {'b_acc': 0.55, 'auc': 0.57},
+                        'HCP_IXI_sex': {'b_acc': 0.92, 'auc': 0.98}},
+                1600: {'SCZ_VIP': {'b_acc': 0.65, 'auc': 0.70},
+                        'BIOBD': {'b_acc': 0.55, 'auc': 0.58},
+                        'HCP_IXI_sex': {'b_acc': 0.88, 'auc': 0.95}},
+                500: {'SCZ_VIP': {'b_acc': 0.68, 'auc': 0.74},
+                      'BIOBD': {'b_acc': 0.59, 'auc': 0.62},
+                      'HCP_IXI_sex': {'b_acc': 0.82, 'auc': 0.91}}
+                }
+
+
 results = {aug: dict() for aug in augmentations}
 results_batch_size = {aug: dict() for aug in augmentations}
 
 # Representation Quality at N={500, 1600} for CROP 75%/CUTOUT25% during contrastive training
 res = {N: {aug+hyper: {db: {s: [[get_pickle_obj(os.path.join(root_ % N, aug, 'sigma_' + str(s),
                                                        "Test_DenseNet_%s_%sblock4_fold%i_epoch%s.pkl" % (
-                                                           db, hyper, f, e))) for f in range(nb_folds)]
+                                                           db if (N != '10K' or db != 'HCP_IXI') else 'Big_Healthy',
+                                                           hyper, f, e))) for f in range(nb_folds)]
                           for e in tested_epochs]
                       for s in sigmas}
                  for db in dbs
@@ -310,9 +332,11 @@ res = {N: {aug+hyper: {db: {s: [[get_pickle_obj(os.path.join(root_ % N, aug, 'si
 
 
 metric = {'SCZ_VIP': roc_auc_score, 'BIOBD': roc_auc_score,
-          'HCP_IXI': lambda y_true, y: np.mean(np.abs(y.ravel()-y_true.ravel()))}
+          'HCP_IXI_age': lambda y_true, y: np.mean(np.abs(y.ravel()-y_true.ravel())),
+          'HCP_IXI_sex': roc_auc_score
+          }
 res_metric = {N: {aug+hyper: {db: {s: [[metric[db](res[N][aug+hyper][db][s][e][f]['y_true'],
-                                             res[N][aug+hyper][db][s][e][f]['y'] if db=='HCP_IXI' else
+                                             res[N][aug+hyper][db][s][e][f]['y'] if db=='HCP_IXI_age' else
                                                    res[N][aug+hyper][db][s][e][f]['y'][:, 1]) for f in range(nb_folds)]
                               for e in range(len(tested_epochs))]
                           for s in sigmas} for db in dbs}
@@ -320,85 +344,310 @@ res_metric = {N: {aug+hyper: {db: {s: [[metric[db](res[N][aug+hyper][db][s][e][f
            for N in all_N}
 
 for N in all_N:
-    fig, big_axes = plt.subplots(len(augmentations), 1, figsize=(12, 15), sharey='col', squeeze=False)
+    fig, big_axes = plt.subplots(len(augmentations), 1, figsize=(5*len(dbs), 5*len(augmentations)), sharey='col', squeeze=False)
     for row, (big_ax, aug_name) in enumerate(zip(big_axes[:,0], augmentation_names), start=1):
         big_ax.set_title(aug_name, fontweight='bold', fontsize=16)
         big_ax.axis('off')
         big_ax._frameon = False
         big_ax.title.set_position([.5, 1.08])
     for k, (aug, hyper) in enumerate(zip(augmentations, hyperparams)):
-        for i, db in enumerate(dbs):
+        for i, (db, task) in enumerate(zip(dbs, prediction_tasks)):
             ax = fig.add_subplot(len(augmentations), len(dbs), k*len(dbs)+i+1)
-            for s in [0, 1, 2, 3, 5]:
+            for s in sigmas:
                 seaborn.lineplot(x=[e for e in tested_epochs for f in range(nb_folds)],
                                  y=[res_metric[N][aug+hyper][db][s][e][f] for e in range(len(tested_epochs))
                                     for f in range(nb_folds)],
                                  marker='o', label='$\sigma=%.1f$' % s, ax=ax)
-            ax.set_title('Performance on %s with $N_{pretrained}=%i$ ' % (db, N))
+            ax.set_title('%s ($N_{pretrained}=%s$)' % (task, N))
             ax.set_xlabel('Contrastive training epochs')
-            if db == "HCP_IXI":
+            if db == "HCP_IXI_age":
                 ax.set_ylabel('MAE')
                 ax.axhline(baseline_age[N][db]['mae'], color='red', linestyle='dotted',
                                    label="Standard Age Pretraining")
+            elif db == "HCP_IXI_sex":
+                ax.set_ylabel('AUC')
+                ax.axhline(baseline_sex[N][db]['auc'], color='orange', linestyle='dotted',
+                                   label="Standard Sex Pretraining")
             else:
                 ax.set_ylabel('AUC')
                 ax.axhline(baseline[db]['auc'], color='gray', linestyle='dotted', label="Supervised on %s"%db)
                 ax.axhline(baseline_age[N][db]['auc'], color='red', linestyle='dotted',
                                    label="Standard Age Pretraining")
+                ax.axhline(baseline_sex[N][db]['auc'], color='orange', linestyle='dotted',
+                                   label="Standard Sex Pretraining")
             ax.legend()
     fig.tight_layout(pad=1)
-    fig.savefig('scz_bip_perf_contrastive_learning_N%i.png'%N)
+    fig.savefig('scz_bip_perf_contrastive_learning_N%s_AgeSex.png'%N)
 
-# Final performance on SCZ vs HC and BIPOLAR vs HC at 300 epochs for all the transformations and N={500, 1600}
-# training samples in pretraining.
-fig, axes = plt.subplots(2, 3, figsize=(15, 10), sharey='row')
-for i,db in enumerate(dbs):
+
+
+# Performance on SCZ vs HC + BIP vs HC when the sigma varies at N_pretraining = 1600 fixed
+N_pretraining = 1600
+sigmas = [0, 1, 2, 3, 5]
+fig, axes = plt.subplots(1, len(dbs), figsize=(len(dbs)*5, 5))
+for i, (db, task) in enumerate(zip(dbs, prediction_tasks)):
+
     for j, (aug, aug_name, hyper) in enumerate(zip(augmentations, augmentation_names, hyperparams)):
-        for sigma, e in zip(sigmas, epochs):
-            batch_size = ['']
-            # if sigma == 5: ## Stress out that the batch size does not change the representation
-            #     batch_size = ['', 'BatchSize_32']
-            for b_size in batch_size:
-                if b_size != '': e = 299
-                h_val = History.load(os.path.join(root_, aug, 'sigma_'+ str(sigma), b_size,
-                                                  "Validation_DenseNet_HCP_IXI_%s2_epoch_%s.pkl"%(hyper, e))).to_dict()
-                res = [get_pickle_obj(os.path.join(root_, aug, 'sigma_'+str(sigma),
-                                     "Test_DenseNet_%s_%sblock4_fold%i_epoch%s.pkl"%(db, hyper, f, e))) for f in range(3)]
-                roc_auc = [roc_auc_score(res[k]['y_true'], res[k]['y'][:,1]) for k in range(3)]
+        e = -1 if aug != "cutout_DA" else 2
+        seaborn.lineplot(x=[s for s in sigmas for _ in range(nb_folds)],
+                         y=[res_metric[N_pretraining][aug+hyper][db][s][e][f] for s in sigmas for f in range(nb_folds)],
+                         label=aug_name, ax=axes[i], marker='o')
+    if db != "HCP_IXI_age" and db != "HCP_IXI_sex":
+        axes[i].axhline(baseline[db]['auc'], color='gray', linestyle='dotted', label="Supervised on %s" % db)
+        axes[i].axhline(baseline_age[N_pretraining][db]['auc'], color='red', linestyle='dotted',
+                    label="Standard Age Pretraining")
+        axes[i].axhline(baseline_sex[N_pretraining][db]['auc'], color='orange', linestyle='dotted',
+                    label="Standard Sex Pretraining")
+    elif db == "HCP_IXI_age":
+        axes[i].axhline(baseline_age[N_pretraining][db]['mae'], color='gray', linestyle='dotted',
+                    label="Supervision on Age")
+    elif db == "HCP_IXI_sex":
+        axes[i].axhline(baseline_sex[N_pretraining][db]['auc'], color='gray', linestyle='dotted',
+                    label="Supervision on Sex")
+    axes[i].set_xlabel("$\sigma$", fontsize=14)
+    axes[i].set_ylabel('AUC' if db != "HCP_IXI_age" else "MAE", fontsize=14)
+    axes[i].set_title(task, fontweight='bold', fontsize=14)
+    axes[i].legend()
 
-                if b_size == '': # Implicit batch size == 16
-                    results[aug][sigma] = {'acc_pretext': np.mean([h_val['accuracy on validation set'][k][-1] for k in range(3)]),
-                                           'auc': roc_auc
-                                           }
-                # else:
-                #     results_batch_size[aug] = {
-                #         'acc_pretext': h_val['accuracy on validation set'][1][-1],
-                #         'auc': roc_auc_score(y_test, y_pred),
-                #         'b_acc': balanced_accuracy_score(y_test, y_pred > 0.5)}
-        axes[i,j].errorbar([results[aug][s]['acc_pretext'] for s in sigmas],
-                         [np.mean(results[aug][s]['auc']) for s in sigmas],
-                         yerr=[np.std(results[aug][s]['auc']) for s in sigmas],
-                         marker='o',
-                        label='Batch size 16')
-        # axes[i].scatter(results_batch_size[aug]['acc_pretext'], results_batch_size[aug]['auc'], marker='*',
-        #                 label='Batch Size 32')
-        # axes[i].annotate("$\sigma=5.0$", (0.001 + results_batch_size[aug]['acc_pretext'],
-        #                                   0.001 + results_batch_size[aug]['auc']))
-        for s in sigmas:
-            axes[i,j].annotate("$\sigma=%.1f$"%s,
-                               (0.001+results[aug][s]['acc_pretext'], 0.001+np.mean(results[aug][s]['auc'])))
-
-        axes[i,j].axhline(baseline[db]['auc'], color='gray', linestyle='dotted', label="Supervised on SCZ vs HC")
-        axes[i,j].axhline(baseline_age[N][db]['auc'], color='red', linestyle='dotted', label="Standard Age Pretraining")
-        axes[i,j].set_xlabel('Accuracy on pretext task', fontsize=14)
-        axes[i,j].set_ylabel('AUC on %s'%db, fontsize=14)
-        axes[i,j].set_title(aug_name, fontweight='bold', fontsize=14)
-        axes[i,j].legend()
-axes[0,0].set_ylim([0.7, 0.8])
-axes[1,0].set_ylim([0.6, 0.7])
 fig.subplots_adjust(top=0.80)
-fig.suptitle('Unsupervised SimCLR With Age Similarity Prior $\sigma$', fontweight='bold', fontsize=16)
-fig.savefig('simclr_perf_implicit_age_sup.png')
+fig.suptitle('Age-Aware Contrastive Learning Performance vs $\sigma$', fontweight='bold', fontsize=16)
+fig.savefig('contrastive-age-aware_perf_sigma.png')
+
+
+## Performance on pretraining task (age prediction) + downstream task (only linear probe) as we vary the number
+# of pre-trained samples.
+# Pre-training: Age Prediction (l1 loss), Age-Aware Contrastive Learning with N = 500, 1600, 10K
+# Downstream tasks: SCZ vs HC, Bipolar vs HC
+
+root = "/neurospin/psy_sbox/bd261576/checkpoints/"
+pretraining_paths = [
+    # Contrastive learning
+    "self_supervision/simCLR/DenseNet/N_{n}/exp_3/age_implicit_supervision/cutout_DA/sigma_0",
+    # Age-Aware Contrastive
+    "self_supervision/simCLR/DenseNet/N_{n}/exp_3/age_implicit_supervision/cutout_DA/sigma_5",
+    # Age Pretraining
+    "regression_age_sex/Benchmark_IXI_HCP/DenseNet/N_{n}/Age",
+]
+supervised_path = [
+    # Supervision from scratch SCZ vs CTL
+    "regression_age_sex/Benchmark_IXI_HCP/DenseNet/N_500/Dx",
+    # Supervision from scratch BIP vs CTL
+    "regression_age_sex/Benchmark_IXI_HCP/DenseNet/N_500/Bipolar"
+]
+pretraining_names = ['Contrastive Learning', 'Age-Aware Contrastive Learning', 'Age Supervision ($l1$-loss)']
+
+filename = "Test_DenseNet_{pb}{db}{hyper}_fold{f}_epoch{e}.pkl"
+N_pretrainings = [500, 1600, '10K']
+epochs = [[299, 30, 30], [299, 30, 30],[299, 299, 299]] # nb pretrainings X #N
+folds = [[3, 3, 3], [3, 3, 3], [5, 5, 3]]
+hypers = [["_window-0.25_N500_block4", "_window-0.25_block4", "_window-0.25_block4"],
+          ["_window-0.25_N500_block4", "_window-0.25_block4", "_window-0.25_block4"],
+          ["", "", ""]]
+pbs = [["", "", ""], ["", "", ""], ["Age_", "Age_", "Age_"]]
+results_age_sup = {
+    name: {
+        N: [get_pickle_obj(os.path.join(root, path.format(n=N), filename.format(db='HCP_IXI' if N != '10K' else 'Big_Healthy',
+                                                                                hyper=hyper, f=f,e=e, pb=pb)))
+            for f in range(nb_folds)]
+        for (N, e, nb_folds, hyper, pb) in zip(N_pretrainings, epochs[i], folds[i], hypers[i], pbs[i])
+    }
+    for i, (name, path) in enumerate(zip(pretraining_names, pretraining_paths))
+}
+# Contrastive: Test_DenseNet_SCZ_VIP_window-0.25_block4_fold2_epoch200.pkl
+# Age: Test_DenseNet_SCZ_VIP_block4_fold2_epoch299.pkl
+hypers = ["_window-0.25_block4", "_window-0.25_block4", "_block4"]
+results_dx = {
+        db: {name: {
+            N: [get_pickle_obj(
+                os.path.join(root, path.format(n=N), filename.format(db=db,  hyper=hyper, f=f, e=e, pb="")))
+                for f in range(nb_folds)]
+            for (N, e, nb_folds) in zip(N_pretrainings, epochs[i], folds[i])
+        }
+        for i, (name, path, hyper) in enumerate(zip(pretraining_names, pretraining_paths, hypers))
+        }
+    for db in ['SCZ_VIP', 'BIOBD']
+}
+# Test_DenseNet_Bipolar_BIOBD_fold0_epoch299.pkl
+baselines = {
+    db: [get_pickle_obj(os.path.join(root, p, filename.format(pb=pb, db=db, hyper="",f=f,e=299))) for f in range(5)]
+    for (db, pb, p) in zip(["SCZ_VIP", "BIOBD"], ["Dx_", "Bipolar_"], supervised_path)
+}
+metrics = {
+    "MAE": lambda r, y: np.mean(np.abs(np.array(r[y]) - np.array(r['y_true']))),
+    "RMSE":  lambda r, y: np.sqrt(np.mean(np.abs(np.array(r[y]) - np.array(r['y_true']))**2)),
+    "r": lambda r, y: pearsonr(np.array(r[y]).flatten(), np.array(r['y_true']).flatten())[0],
+    "AUC": lambda r, y: roc_auc_score(np.array(r['y_true']), np.array(r[y])[:,1]),
+    "AUC_single" : lambda r, y: roc_auc_score(np.array(r['y_true']), np.array(r[y]))
+}
+
+fig, axes = plt.subplots(3, 1, figsize=(5, 10), sharex=True)
+axes[0].set_title("Age Prediction", fontweight="bold")
+axes[0].set_ylim([1, 9])
+axes[0].set_ylabel("MAE")
+axes[1].set_title("SCZ vs HC", fontweight="bold")
+axes[1].set_ylabel("AUC")
+axes[1].set_ylim([0.5, 0.9])
+axes[2].set_title("BIPOLAR vs HC", fontweight="bold")
+axes[2].set(xscale="log")
+axes[2].set_xticks([500, 1600, 10**4])
+axes[2].set_xticklabels(["$5\\times 10^2$", "$1.6\\times 10^3$", '$10^4$'])
+axes[2].set_ylabel("AUC")
+axes[2].set_ylim([0.4, 0.7])
+axes[2].set_xlabel("$N_{pretrained}$")
+for i, name in enumerate(pretraining_names):
+    seaborn.lineplot(x=[N if N!='10K' else 10**4 for _ in range(nb_folds) for (N, nb_folds) in zip(N_pretrainings, folds[i])],
+                     y=[metrics["MAE"](results_age_sup[name][N][k], "y_pred" if "Supervision" in name else "y")
+                        for k in range(nb_folds) for (N, nb_folds) in zip(N_pretrainings, folds[i])],
+                     ax=axes[0], label=name, marker='o',err_style='bars', err_kws={'capsize': 10})
+    for j, db in enumerate(["SCZ_VIP", "BIOBD"], start=1):
+        seaborn.lineplot(x=[N if N!='10K' else 10**4 for _ in range(nb_folds) for (N, nb_folds) in zip(N_pretrainings, folds[i])],
+                         y=[metrics["AUC"](results_dx[db][name][N][k], "y")
+                            for k in range(nb_folds) for (N, nb_folds) in zip(N_pretrainings, folds[i])],
+                         ax=axes[j], label=name, marker='o',err_style='bars', err_kws={'capsize': 10})
+        base = np.mean([metrics["AUC_single"](baselines[db][k], "y_pred") for k in range(5)])
+        if i==0: axes[j].axhline(base, color='red', linestyle='dotted', label="Baseline")
+fig.savefig("unsupervised_perf_age_scz_bip_N_varies.png")
+
+
+## Performance on SCZ vs HC and BIP vs HC when N_fine_tuned varies (nb of training samples for the fine-tuning)
+## Pre-training: Age Prediction (N=10K) or Contrastive Learning (cutout) or
+#  Age-Aware Contrastive Learning (cutout) (N=10K) or Age-Sex-Aware Contrastive Learning
+seaborn.set_style('darkgrid')
+N_pretraining = '10K'
+N_finetuning = [100, 300, 500]
+root = "/neurospin/psy_sbox/bd261576/checkpoints/"
+pretraining_paths = [
+    # Contrastive learning
+    "self_supervision/simCLR/DenseNet/N_{n}/exp_3/age_implicit_supervision/cutout_DA/sigma_0",
+    # Age-Aware Contrastive
+    "self_supervision/simCLR/DenseNet/N_{n}/exp_3/age_implicit_supervision/cutout_DA/sigma_5",
+    # (Age, Sex)-Aware Contrastive
+    "self_supervision/simCLR/DenseNet/N_{n}/exp_3/age_sex_implicit_supervision/cutout_DA/sigma_5",
+    # Age Pretraining
+    "regression_age_sex/Benchmark_IXI_HCP/DenseNet/N_{n}/Age",
+    # Supervision from scratch SCZ vs CTL/BIP vs CTL
+    "regression_age_sex/Benchmark_IXI_HCP/DenseNet/N_{n_finetune}/{pb}",
+]
+nb_folds = [5, 5, 5, 5, 5]
+hyperparams = ['_window-0.25', '_window-0.25', '_window-0.25', '', '_Dx', '']
+blocks = ['_block4', '_block4', '_block4', '_block4', '', '']
+dbs = ['SCZ_VIP', 'BIOBD']
+pbs = ['Dx', 'Bipolar']
+exp_names = ["Contrastive Learning", "Age-Aware Contrastive Learning", "(Age, Sex)-Aware Contrastive Learning",
+             "Age Supervision", "Supervised on target task"]
+all_epochs = [[30], [30], [30], [100], [299]]
+results = {db: {name: {} for name in exp_names} for db in dbs}
+
+fig, axes = plt.subplots(1, 2, figsize=(13, 8))
+axes[0].set_title("SCZ vs CTL", fontweight="bold", fontsize=14)
+axes[1].set_title("BIPOLAR vs CTL", fontweight="bold", fontsize=14)
+for i, (pb, db) in enumerate(zip(pbs, dbs)):
+    for (name, path, epochs, folds, hyper, b) in zip(exp_names, pretraining_paths, all_epochs, nb_folds, hyperparams, blocks):
+        for e in epochs:
+            for n_finetuning in N_finetuning:
+                filename = "Test_DenseNet_{db}{hyper}_N{n_finetuning}{block}_ModelFold0_fold{f}_epoch{e}.pkl" if name != "Supervised on target task"\
+                            else "Test_DenseNet_{pb}_{db}_fold{f}_epoch{e}.pkl"
+                results[db][name][n_finetuning] = [get_pickle_obj(
+                    os.path.join(root, path.format(n=N_pretraining, n_finetune=n_finetuning, pb=pb), filename.
+                                 format(db=db, pb=pb, hyper=hyper, n_finetuning=n_finetuning, block=b, f=fold,e=e)))
+                                                    for fold in range(folds)]
+            ax = seaborn.lineplot(x=[n for n in N_finetuning for _ in range(folds)],
+                                  y=[roc_auc_score(results[db][name][n][f]['y_true'],
+                                              np.array(results[db][name][n][f]['y_pred']) if name=="Supervised on target task" else
+                                              results[db][name][n][f]['y'][:, 1])
+                                for n in N_finetuning for f in range(folds)],
+                             ax=axes[i],
+                             err_style='bars', err_kws={'capsize': 10},
+                             label=name)
+    axes[i].set_ylabel("AUC")
+    axes[i].set_xlabel("$N_{target}$")
+
+fig.savefig("unsupervised_perf_scz_bip_AgeSex_N10K.png")
+
+
+## t-SNE visualization of BSNIP according to different pre-trainings
+
+# 1) take all SCZ/BIP/CTL from BSNIP and  plots t-SNE for i) Sup Contrastive Loss (sigma=5),
+# ii) Contrastive Loss (sigma=0) and iii) Age Prediction (l1-loss)
+nb_folds = 3
+sigmas = [0, 5]
+tested_epochs = [30]
+features_contrastive = {
+    s: [[get_pickle_obj("/neurospin/psy_sbox/bd261576/checkpoints/self_supervision/simCLR/DenseNet/N_10K/"
+                        "exp_3/age_implicit_supervision/cutout_DA/sigma_{s}/"
+                        "features_DenseNet_BSNIP_window-0.25_fold{f}_epoch{e}.pkl".format(s=s, f=f, e=e))
+         for f in range(nb_folds)] for e in tested_epochs] for s in sigmas}
+# features_contrastive_scz = [
+#     [get_pickle_obj("/neurospin/psy_sbox/bd261576/checkpoints/self_supervision/simCLR/DenseNet/N_500/"
+#                     "exp_3/age_dx_implicit_supervision/cutout_DA/sigma_5/"
+#                     "features_DenseNet_BSNIP_window-0.25_fold{f}_epoch299.pkl".format(f=f))
+#      for f in range(nb_folds)]
+# ]
+tested_epochs =  [299]
+features_age = [
+    [get_pickle_obj("/neurospin/psy_sbox/bd261576/checkpoints/regression_age_sex/Benchmark_IXI_HCP/DenseNet/N_10K/Age/"
+                    "features_DenseNet_BSNIP_fold{f}_epoch{e}.pkl".format(f=f, e=e))
+     for f in range(nb_folds)] for e in tested_epochs]
+tested_epochs =  [299]
+features_dx = {pb: [
+    [get_pickle_obj("/neurospin/psy_sbox/bd261576/checkpoints/regression_age_sex/Benchmark_IXI_HCP/DenseNet/N_500/{pb}/"
+                    "features_DenseNet_BSNIP_fold{f}_epoch{e}.pkl".format(pb=pb, f=f, e=e))
+     for f in range(nb_folds)] for e in tested_epochs]
+    for pb in ['Dx', 'Bipolar']
+}
+
+seaborn.set_style('white')
+fig, axes = plt.subplots(2, 3, figsize=(19, 13))
+l_mapping = {0: 'control', 1: "schizophrenia", 2: "bipolar"}
+mapping = lambda x: l_mapping[x]
+
+for i, s in enumerate(sigmas):
+    epoch_i = -1
+    plot_data_reduced(features_contrastive[s][epoch_i][0]['y'][:, 0, :],
+                      ax=axes[0, i],
+                      labels=features_contrastive[s][epoch_i][0]['y_true'][:, 0, 1],
+                      labels_title="Dx",
+                      continuous_labels=features_contrastive[s][epoch_i][0]['y_true'][:, 0, 0]**2/20,
+                      inv_continuous_labels_tf=lambda x: np.sqrt(x*20),
+                      continuous_labels_title="Age",
+                      labels_mapping_fn=mapping, cmap=plt.cm.winter,
+                      title="Contrastive Learning" if s==0 else "Age-Aware Contrastive Learning",
+                      reduction='t_sne', metric='cosine', perplexity=30)
+epoch_i = -1
+mask = (features_dx['Dx'][epoch_i][0]['y_true'][:,0,1] < 2)
+plot_data_reduced(features_dx['Dx'][epoch_i][0]['y'][mask][:, 0, :],
+                  ax=axes[1,0],
+                  labels=features_dx['Dx'][epoch_i][0]['y_true'][mask][:, 0, 1],
+                  labels_title="Dx",
+                  continuous_labels=features_dx['Dx'][epoch_i][0]['y_true'][mask][:, 0, 0]**2/20,
+                  inv_continuous_labels_tf=lambda x: np.sqrt(x * 20),
+                  continuous_labels_title="Age",
+                  labels_mapping_fn=mapping, cmap=plt.cm.winter,
+                  title="Supervision on SCZ vs HC",
+                  reduction='t_sne', metric='cosine', perplexity=30)
+mask = (features_dx['Dx'][epoch_i][0]['y_true'][:,0,1] != 1)
+plot_data_reduced(features_dx['Bipolar'][epoch_i][0]['y'][mask][:, 0, :],
+                  ax=axes[1,1],
+                  labels=features_dx['Bipolar'][epoch_i][0]['y_true'][mask][:, 0, 1],
+                  labels_title="Dx",
+                  continuous_labels=features_dx['Bipolar'][epoch_i][0]['y_true'][mask][:, 0, 0]**2/20,
+                  inv_continuous_labels_tf=lambda x: np.sqrt(x * 20),
+                  continuous_labels_title="Age",
+                  labels_mapping_fn=mapping, cmap=plt.cm.winter,
+                  title="Supervision on BIPOLAR vs HC",
+                  reduction='t_sne', metric='cosine', perplexity=30)
+plot_data_reduced(features_age[epoch_i][0]['y'][:, 0, :],
+                  ax=axes[1,2],
+                  labels=features_age[epoch_i][0]['y_true'][:, 0, 1],
+                  labels_title="Dx",
+                  continuous_labels=features_age[epoch_i][0]['y_true'][:, 0, 0]**2/20,
+                  inv_continuous_labels_tf=lambda x: np.sqrt(x * 20),
+                  continuous_labels_title="Age",
+                  labels_mapping_fn=mapping, cmap=plt.cm.winter,
+                  title="Supervision on Age",
+                  reduction='t_sne', metric='cosine', perplexity=30)
+
+fig.savefig("t-SNE_contrastive-age-aware.png")
 
 ## Plots losses
 # fig, axes = plot_losses(h, h_val,
@@ -462,23 +711,23 @@ X_train = next(train_iter).inputs.detach().cpu().numpy()
 tfs = [lambda x: x,
        Crop((1, 64, 64, 64), "random", resize=True),
        Crop((1, 64, 64, 64), "random", resize=False, keep_dim=True),
-       lambda x: cutout(x, patch_size=40)]
+       lambda x: cutout(x, patch_size=32, localization=(64, 64, 80))]
 reps = [1, 2, 2, 2]
 tf_names = ['Original Image', 'Crop+Resize', 'Crop', 'Cutout']
 
-cols = 1+np.sum(reps)
-fig, axes = plt.subplots(len(X_train)+1, cols, figsize=(cols*5, (len(X_train)+1)*5), sharey=True)
+cols = 1 + np.sum(reps)
+fig, axes = plt.subplots(len(X_train) + 1, cols, figsize=(cols * 5, (len(X_train) + 1) * 5), sharey=True)
 for i, x in enumerate(X_train, start=1):
-    axes[i, 0].text(0.5, 0.5, 'Image %i'%i, fontsize=20)
+    axes[i, 0].text(0.5, 0.5, 'Image %i' % i, fontsize=20)
     axes[i, 0].axis('off')
     for c, (tf, rep, name) in enumerate(zip(tfs, reps, tf_names)):
         for j in range(rep):
-            current_j = np.concatenate([[0], np.cumsum(reps)])[c]+j+1
+            current_j = np.concatenate([[0], np.cumsum(reps)])[c] + j + 1
             x_tf = tf(x)
             histogram, bin_edges = np.histogram(x_tf, bins=100, range=(-0.7, 0.1))
-            axes[i, current_j].plot(bin_edges[:-1], histogram/128**3)
+            axes[i, current_j].plot(bin_edges[:-1], histogram / 128 ** 3)
             axes[i, current_j].set_ylim([0, 1])
-            axes[0, current_j].set_title('{name} {r}'.format(name=name, r=j+1) if rep > 1 else name, fontsize=20)
+            axes[0, current_j].set_title('{name} {r}'.format(name=name, r=j + 1) if rep > 1 else name, fontsize=20)
             if i == 1:
                 axes[0, 0].axis('off')
                 plot_anat(Nifti1Image(x_tf[0], np.eye(4)), cut_coords=[50], display_mode='x',

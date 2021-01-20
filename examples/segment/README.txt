@@ -1,2 +1,0 @@
-Segmentations use cases
------------------------

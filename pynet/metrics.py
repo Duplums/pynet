@@ -252,12 +252,12 @@ def get_binary_classification_metrics(path, epochs_tested, folds_tested, MCTest=
                 aupr_success=all_aupr_success, aupr_error=all_aupr_error, ece=all_ece)
 
 
-def get_regression_metrics(path, epochs_tested, folds_tested, display=True):
+def get_regression_metrics(path, epochs_tested, folds_tested, display=True, name_y_pred="y_pred"):
     from sklearn.linear_model import LinearRegression
     from scipy.stats import pearsonr
 
     data =  [get_pickle_obj(path.format(fold=f, epoch=e)) for (f, e) in zip(folds_tested, epochs_tested)]
-    data = [(np.array(d['y_true']).reshape(-1, 1), np.array(d['y_pred']).reshape(-1, 1)) for d in data]
+    data = [(np.array(d['y_true']).reshape(-1, 1), np.array(d[name_y_pred]).reshape(-1, 1)) for d in data]
 
     regs = [LinearRegression().fit(y_true, y_pred) for (y_true, y_pred) in data]
     correlations = [pearsonr(y_pred.flatten(), y_true.flatten())[0] for (y_true, y_pred) in data]

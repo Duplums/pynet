@@ -26,8 +26,8 @@ class SimCLRDataset(ArrayDataset):
             #                            with_channel=True, probability=0.5)
             # compose_transforms.register(add_noise, sigma=(0.1, 1), probability=0.5)
             # compose_transforms.register(add_spike, n_spikes=2, probability=0.5)
-            #compose_transforms.register(cutout, probability=1, patch_size=64, random_size=True, inplace=False)
-            compose_transforms.register(Crop((96, 96, 96), "random", resize=True), probability=1)
+            #compose_transforms.register(cutout, probability=1, patch_size=32, inplace=False)
+            compose_transforms.register(Crop((64, 64, 64), "random", resize=True), probability=1)
             # compose_transforms.register(add_biasfield, probability=0.1, coefficients=0.5)
             # compose_transforms = RandomAffine(scales=1.0, degrees=40, translation=40, p=1)
 

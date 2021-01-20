@@ -26,7 +26,8 @@ if __name__=="__main__":
     parser.add_argument("--nb_epochs_per_saving", type=int, default=5)
     parser.add_argument("--num_classes", type=int, default=1)
     parser.add_argument("--da", type=str, nargs='+', default=[], choices=['flip', 'blur', 'noise', 'resized_crop',
-                                                                          'affine', 'ghosting', 'motion', 'spike', 'biasfield', 'swap'])
+                                                                          'affine', 'ghosting', 'motion', 'spike',
+                                                                          'biasfield', 'swap', 'cutout'])
     parser.add_argument("--manual_seed", type=int, help="The manual seed to give to pytorch.")
     parser.add_argument("-b", "--batch_size", type=int, required=True)
     parser.add_argument("--dropout", type=float, default=0, help="Dropout rate to use thoughout the network. "
@@ -47,7 +48,7 @@ if __name__=="__main__":
     parser.add_argument("--labels", nargs='+', type=str, help="Label(s) to be predicted")
     parser.add_argument("--loss", type=str, choices=['BCE', 'l1', 'BCE_concrete_dropout', 'NTXenLoss', 'multi_l1_bce',
                                                      'l1_sup_NTXenLoss', 'BCE_SBRLoss', 'GeneralizedSupervisedNTXenLoss',
-                                                     'AgeSexSupervisedNTXenLoss'],
+                                                     'ContinuousDiscreteSupervisedNTXenLoss'],
                         required=True)
     parser.add_argument("--loss_param", type=float, help="The hyper-parameter given to the loss. Must be a float.")
     parser.add_argument("--folds", nargs='+', type=int, help="Fold indexes to run during the training")

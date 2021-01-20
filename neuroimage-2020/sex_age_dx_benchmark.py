@@ -299,19 +299,19 @@ plt.savefig('delta_age_err_analysis.png')
 ### Learning curves
 
 root = '/neurospin/psy_sbox/bd261576/checkpoints/regression_age_sex/Benchmark_IXI_HCP'
-net_names = ['ResNet34', 'DenseNet', 'tiny-VGG']#, 'tiny-DenseNet', 'Linear Model']
-nets = ['ResNet34', 'DenseNet', 'ColeNet']#, 'TinyDenseNet_Exp9', "LinearModel"]
-path_nets = ['ResNet/ResNet34', 'DenseNet', 'ColeNet']#, 'TinyDenseNet', 'LinearModel']
-preprocessings = ['']
+net_names = ['ResNet34', 'DenseNet', 'tiny-VGG', 'tiny-DenseNet']#, 'Linear Model']
+nets = ['ResNet34', 'DenseNet', 'ColeNet', 'TinyDenseNet_Exp9']#, "LinearModel"]
+path_nets = ['ResNet/ResNet34', 'DenseNet', 'ColeNet', 'TinyDenseNet']#, 'LinearModel']
+preprocessings = ['quasi_raw']
 
 all_metrics = {preproc: {pb: dict() for pb in ['Age', 'Sex', 'Dx']} for preproc in preprocessings}
 nb_training_samples = [[100, 300, 500, 1000, 1600, 10000],[100, 300, 500, 1000, 1600, 10000], [100, 300, 500]]
 nb_epochs = [299]
-
-X = [[n for n in training for k in range(3+2*(n<10000)+5*(n<500))] for i,training in enumerate(nb_training_samples)]
+nb_folds_10K = 3
+X = [[n for n in training for k in range(nb_folds_10K+(5-nb_folds_10K)*(n<10000)+5*(n<500))] for i,training in enumerate(nb_training_samples)]
 
 all_results = {preproc: {pb: {net if net!="LinearModel" else ('Ridge' if pb=='Age' else 'LogisticRegression'):
-                                  [[[0 for k in range(3+2*(n<10000)+5*(n<500))]
+                                  [[[0 for k in range(nb_folds_10K+(5-nb_folds_10K)*(n<10000)+5*(n<500))]
                                      for n in nb_training_samples[n_pb]]
                                     for e in nb_epochs]
                               for net in nets}
@@ -330,7 +330,7 @@ for preproc in preprocessings:
                 if name == "Linear Model":
                     e = 100
                 for j, n in enumerate(nb_training_samples[n_pb]):
-                    for k in range(3+2*(n<10000)+5*(n<500)):
+                    for k in range(nb_folds_10K+(5-nb_folds_10K)*(n<10000)+5*(n<500)):
                         hyperparams = "_step_size_scheduler_10_gamma_0.7" \
                             if (net == "TinyDenseNet_Exp9" and pb == "Age" and n > 100 and n<1000) else "_step_size_scheduler_10"
                         try:
@@ -347,22 +347,22 @@ for preproc in preprocessings:
                                             k=k, n=n if n<10000 else '10K', e=e))
 
             if pb == 'Age': # Compute MAE
-                all_metrics[preproc][pb][net] = [[np.mean(np.abs(np.array(all_results[preproc][pb][net][e][i][k]['y_true'])-
-                                                                 np.array(all_results[preproc][pb][net][e][i][k]['y_pred'])))
+                all_metrics[preproc][pb][net] = [[np.mean(np.abs(np.array(all_results[preproc][pb][net][e][i][k]['y_true']).ravel()-
+                                                                 np.array(all_results[preproc][pb][net][e][i][k]['y_pred']).ravel()))
                                                   for i,n in enumerate(nb_training_samples[n_pb])
-                                                  for k in range(3+2*(n<10000)+5*(n<500)) ]
+                                                  for k in range(nb_folds_10K+(5-nb_folds_10K)*(n<10000)+5*(n<500)) ]
                                                  for e in range(len(nb_epochs))]
             if pb == 'Sex' or pb == "Dx": # Compute AUC
                 all_metrics[preproc][pb][net] = [[roc_auc_score(all_results[preproc][pb][net][e][i][k]['y_true'],
                                                                 all_results[preproc][pb][net][e][i][k]['y_pred'])
                                                   for i, n in enumerate(nb_training_samples[n_pb])
-                                                  for k in range(3+2*(n<10000)+5*(n<500)) ]
+                                                  for k in range(nb_folds_10K+(5-nb_folds_10K)*(n<10000)+5*(n<500)) ]
                                                  for e in range(len(nb_epochs))]
 
             for k, epoch in enumerate(nb_epochs):
                 seaborn.lineplot(x=X[n_pb], y=all_metrics[preproc][pb][net][k], marker='o', label=name, ax=axes[k, n_pb])
                 if pb != "Dx":
-                    axes[k, n_pb].set_x
+                    axes[k, n_pb].set_xscale('log')
 
     axes[0,0].set_ylim(bottom=3)
     axes[0,1].set_ylim(top=1)
@@ -869,9 +869,9 @@ nb_epochs = [299, 99, 299]
 metrics = ['mae', 'auc', 'auc']
 comparison_metrics = [operator.le, operator.ge, operator.ge]
 nb_folds = 5
-y_limits = [(4,10), (0.7, 0.9), (0.8, 1)]
+y_limits = [(5,10), (0.7, 0.9), (0.8, 1)]
 databases = ['HCP_IXI', 'SCZ_VIP', 'HCP_IXI']
-preprocs = ['']
+preprocs = ['quasi_raw']
 root = '/neurospin/psy_sbox/bd261576/checkpoints/regression_age_sex/Benchmark_IXI_HCP'
 file = 'Test_%s_%s_%s_%sfold{fold}_epoch{epoch}.pkl'
 hyperparams = {}#'Crop': 'crop_115-138-115_'}#,

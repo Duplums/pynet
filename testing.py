@@ -103,11 +103,17 @@ class NNRepresentationTester(BaseTester):
         ## Several networks to test corresponding to a partial version of the whole network
         self.nets = [BaseTrainer.build_network(args.net+'_block%i'%i, args.num_classes, args, in_channels=1)
                      for i in range(4, 5)]
-        ## Little hack
+        ## Little hack: if we use the whole training set (no N_train_max), then we set the nb of folds to 1 and
+        ## we test on several pre-trained models. Otherwise, the fold nb of the pre-trained model must be set and
+        ## we make the nb of fine-tuning folds vary.
         true_nb_folds = args.nb_folds
-        args.nb_folds = 1
+        if args.N_train_max is None:
+            args.nb_folds = 1
+        else:
+            assert args.folds != None, "If N_train_max is set, the --folds param must be set."
         self.manager = BaseTrainer.build_data_manager(args)
-        args.nb_folds = true_nb_folds
+        if args.N_train_max is None:
+            args.nb_folds = true_nb_folds
         ## Useless, just to avoid weird issues
         self.loss = BaseTrainer.build_loss(args.loss, net=self.nets[0], args=self.args)
         ## Usual logger and warning
@@ -118,54 +124,59 @@ class NNRepresentationTester(BaseTester):
     def run(self):
         epochs_tested = self.get_epochs_to_test()
         folds_to_test = self.get_folds_to_test()
+        finetuned_folds = [0] if self.args.N_train_max is None else list(range(self.args.nb_folds))
         # Passes the training/testing set through the encoder and uses scikit-learn to predict
         # the target (either logistic regression or ridge regression
-        for fold in folds_to_test:
+        for fold in folds_to_test: ## pre-trained models fold
             for epoch in epochs_tested[fold]:
                 pretrained_path = self.args.pretrained_path or \
                                   os.path.join(self.args.checkpoint_dir, get_chk_name(self.args.exp_name, fold, epoch))
                 for i, net in enumerate(self.nets, start=4):
-                    outfile = self.args.outfile_name or ("Test_" + self.args.exp_name)
-                    exp_name = outfile + "_block{}_fold{}_epoch{}.pkl".format(i, fold, epoch)
-                    model_cls = SimCLR if self.args.model == "SimCLR" else Base
-                    model = model_cls(model=net, loss=self.loss,
-                                   pretrained=pretrained_path,
-                                   use_cuda=self.args.cuda)
-                    if self.args.model == "SimCLR":
-                        # 1st: passes all the training data through the model
-                        x_enc, y_train = model.features_avg_test(self.manager.get_dataloader(train=True).train,
-                                                                 M=int(self.args.test_param or 1))
-                        # 2nd: passes all the testing data through the model
-                        xt_enc, y_test = model.features_avg_test(self.manager.get_dataloader(test=True).test,
-                                                                 M=int(self.args.test_param or 1))
-                    else: # idem but with MCTest
-                        x_enc, y_train = model.MC_test(self.manager.get_dataloader(train=True).train,
-                                                       MC=int(self.args.test_param or 1))
-                        xt_enc, y_test = model.MC_test(self.manager.get_dataloader(test=True).test,
-                                                       MC=int(self.args.test_param or 1))
-                    y_train = y_train[:, 0]
-                    y_test = y_test[:, 0]
-                    x_enc = np.mean(x_enc, axis=1) # mean over the sampled features f_i from the same input x
-                    xt_enc = np.mean(xt_enc, axis=1)
+                    for finetuned_fold in finetuned_folds: ## fine-tuning training fold
+                        outfile = self.args.outfile_name or ("Test_" + self.args.exp_name)
+                        if len(finetuned_folds) > 1:
+                            exp_name = outfile + "_block{}_ModelFold{}_fold{}_epoch{}.pkl".format(i, fold, finetuned_fold, epoch)
+                        else:
+                            exp_name = outfile + "_block{}_fold{}_epoch{}.pkl".format(i, fold, epoch)
+                        model_cls = SimCLR if self.args.model == "SimCLR" else Base
+                        model = model_cls(model=net, loss=self.loss,
+                                       pretrained=pretrained_path,
+                                       use_cuda=self.args.cuda)
+                        if self.args.model == "SimCLR":
+                            # 1st: passes all the training data through the model
+                            x_enc, y_train = model.features_avg_test(self.manager.get_dataloader(train=True, fold_index=finetuned_fold).train,
+                                                                     M=int(self.args.test_param or 1))
+                            # 2nd: passes all the testing data through the model
+                            xt_enc, y_test = model.features_avg_test(self.manager.get_dataloader(test=True).test,
+                                                                     M=int(self.args.test_param or 1))
+                        else: # idem but with MCTest
+                            x_enc, y_train = model.MC_test(self.manager.get_dataloader(train=True, fold_index=finetuned_fold).train,
+                                                           MC=int(self.args.test_param or 1))
+                            xt_enc, y_test = model.MC_test(self.manager.get_dataloader(test=True).test,
+                                                           MC=int(self.args.test_param or 1))
+                        y_train = y_train[:, 0]
+                        y_test = y_test[:, 0]
+                        x_enc = np.mean(x_enc, axis=1) # mean over the sampled features f_i from the same input x
+                        xt_enc = np.mean(xt_enc, axis=1)
 
-                    # 3rd: train scikit-learn model and save the results
-                    label = self.args.labels
-                    if label is None or len(label) > 1 or len({'age', 'sex', 'diagnosis'} & set(label)) == 0:
-                        raise ValueError("Please correct the label to predict (got {})".format(label))
-                    label = label[0]
-                    if label in ['sex', 'diagnosis']:
-                        model = GridSearchCV(LogisticRegression(solver='liblinear'), cv=5,
-                                             param_grid={'C': [1e-2, 1e-1, 1, 1e1]}, scoring='roc_auc', n_jobs=5)
-                        model.fit(np.array(x_enc).reshape(len(x_enc), -1), np.array(y_train).ravel())
-                        y_pred = model.predict_proba(np.array(xt_enc).reshape(len(xt_enc), -1))
-                    if label == 'age':
-                        model = GridSearchCV(Ridge(), cv=5, param_grid={'alpha': [1e-1, 1, 1e1, 1e2]},
-                                             scoring='r2')
-                        model.fit(np.array(x_enc).reshape(len(x_enc), -1), np.array(y_train).ravel())
-                        y_pred = model.predict(np.array(xt_enc).reshape(len(xt_enc), -1))
+                        # 3rd: train scikit-learn model and save the results
+                        label = self.args.labels
+                        if label is None or len(label) > 1 or len({'age', 'sex', 'diagnosis'} & set(label)) == 0:
+                            raise ValueError("Please correct the label to predict (got {})".format(label))
+                        label = label[0]
+                        if label in ['sex', 'diagnosis']:
+                            model = GridSearchCV(LogisticRegression(solver='liblinear'), cv=5,
+                                                 param_grid={'C': [1e-2, 1e-1, 1, 1e1]}, scoring='roc_auc', n_jobs=5)
+                            model.fit(np.array(x_enc).reshape(len(x_enc), -1), np.array(y_train).ravel())
+                            y_pred = model.predict_proba(np.array(xt_enc).reshape(len(xt_enc), -1))
+                        if label == 'age':
+                            model = GridSearchCV(Ridge(), cv=5, param_grid={'alpha': [1e-1, 1, 1e1, 1e2]},
+                                                 scoring='r2')
+                            model.fit(np.array(x_enc).reshape(len(x_enc), -1), np.array(y_train).ravel())
+                            y_pred = model.predict(np.array(xt_enc).reshape(len(xt_enc), -1))
 
-                    with open(os.path.join(self.args.checkpoint_dir, exp_name), 'wb') as f:
-                        pickle.dump({"y": y_pred, "y_true": y_test}, f)
+                        with open(os.path.join(self.args.checkpoint_dir, exp_name), 'wb') as f:
+                            pickle.dump({"y": y_pred, "y_true": y_test}, f)
 
 
 

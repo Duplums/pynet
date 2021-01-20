@@ -70,7 +70,7 @@ def affine(arr, rotation=10, translation=10, zoom=0.2, order=3, dist="uniform"):
     transformed = map_coordinates(arr, locs, order=order, cval=0)
     return transformed.reshape(shape)
 
-def cutout(arr, patch_size=None, value=0, random_size=False, inplace=False):
+def cutout(arr, patch_size=None, value=0, random_size=False, inplace=False, localization=None):
     """Apply a cutout on the images
     cf. Improved Regularization of Convolutional Neural Networks with Cutout, arXiv, 2017
     We assume that the square to be cut is inside the image.
@@ -87,7 +87,10 @@ def cutout(arr, patch_size=None, value=0, random_size=False, inplace=False):
             size[ndim] = img_shape[ndim]
         if random_size:
             size[ndim] = np.random.randint(0, size[ndim])
-        delta_before = np.random.randint(0, img_shape[ndim] - size[ndim] + 1)
+        if localization is not None:
+            delta_before = max(localization[ndim] - size[ndim]//2, 0)
+        else:
+            delta_before = np.random.randint(0, img_shape[ndim] - size[ndim] + 1)
         indexes.append(slice(delta_before, delta_before + size[ndim]))
     if inplace:
         arr[tuple(indexes)] = value

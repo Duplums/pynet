@@ -69,8 +69,8 @@ class BaseTrainer():
             loss = NTXenLoss(temperature=0.1, return_logits=True)
         elif name == "GeneralizedSupervisedNTXenLoss": ## Default value for sigma == 5
             loss = GeneralizedSupervisedNTXenLoss(temperature=0.1, kernel='rbf', sigma=args.loss_param or 5, return_logits=True)
-        elif name == "AgeSexSupervisedNTXenLoss": ## Default value for sigma == 5
-            loss = AgeSexSupervisedNTXenLoss(temperature=0.1, sigma=args.loss_param or 5, return_logits=True)
+        elif name == "ContinuousDiscreteSupervisedNTXenLoss": ## Default value for sigma == 5
+            loss = ContinuousDiscreteSupervisedNTXenLoss(temperature=0.1, sigma=args.loss_param or 5, return_logits=True)
         elif name == "multi_l1_bce": # mainly for (age, sex) prediction
             loss = MultiTaskLoss([nn.L1Loss(), nn.BCEWithLogitsLoss()], weights=[1, 1])
         elif name == "l1_sup_NTXenLoss": # Mainly for supervised SimCLR
@@ -181,7 +181,8 @@ class BaseTrainer():
             'motion': (add_motion, {'n_transforms': 3, 'rotation': 40, 'translation': 10}),
             'spike': (add_spike, {'n_spikes': 10, 'intensity': 1}),
             'biasfield': (add_biasfield, {'coefficients': 0.7}),
-            'swap': (add_swap, {'num_iterations': 20})
+            'swap': (add_swap, {'num_iterations': 20}),
+            'cutout': (cutout, {'patch_size': 32})
 
         }
         compose_transforms = Transformer()
@@ -216,7 +217,7 @@ class BaseTrainer():
                                         HardNormalization()]
                 else:
                     input_transforms = [Crop((1, 121, 128, 121)), Padding([1, 128, 128, 128], mode='constant'), Normalize()]
-            elif args.preproc == 'quasi_raw': # Size [122 x 146 x 122], 1.5mm³
+            elif args.preproc == 'quasi_raw': # Size [121 x 145 x 121], 1.5mm³
                 if args.net == "alpha_wgan":
                     input_transforms = [Crop((1, 121, 128, 121)), Padding([1, 128, 128, 128], mode='constant'),
                                         HardNormalization()]
@@ -228,13 +229,14 @@ class BaseTrainer():
         df = pd.concat([pd.read_csv(p, sep=',') for p in args.metadata_path], ignore_index=True, sort=False)
 
         # <label>: [LabelMapping(), IsCategorical]
+
+
         known_labels = {'age': [LabelMapping(), False],
                         'sex': [LabelMapping(), True],
                         'site': [
                             LabelMapping(**{site: indice for (indice, site) in enumerate(sorted(set(df['site'])))}),
                             True],
-                        'diagnosis': [LabelMapping(schizophrenia=1, FEP=1, control=0,
-                                                   **{"bipolar disorder": 1, "psychotic bipolar disorder": 1}), True]
+                        'diagnosis': [LabelMapping(**CONFIG['db'][args.db]["dx_labels_mapping"]), True]
                         }
 
         assert set(labels) <= set(known_labels.keys()), \
